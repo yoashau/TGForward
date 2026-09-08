@@ -1,0 +1,4 @@
+pyrofork[speedup]==2.3.69
+python-dotenv==1.2.3
+cryptography==50.0.1
+Pillow==12.3.0

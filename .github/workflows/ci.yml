@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            requirements/*.txt
+            requirements/runtime.lock
+      - run: pip install -r requirements/dev.txt -c requirements/runtime.lock
+      - run: ruff check .
+      - run: ruff format --check tgforward tests
+      - run: python -m pytest
+      - run: bash -n scripts/deploy.sh
+      - name: 验证发布版本
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: test "${GITHUB_REF_NAME#v}" = "$(python -m tgforward --version)"
+      - name: 验证镜像入口
+        run: |
+          docker build --build-arg SOURCE_REVISION="$GITHUB_SHA" -t tgforward:ci .
+          docker run --rm --network none --entrypoint python tgforward:ci -m tgforward --version
+          docker run --rm --network none --entrypoint python tgforward:ci -m tgforward.tools.import_mongo --help
+
+  publish:
+    needs: checks
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/image.yml

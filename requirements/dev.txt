@@ -1,0 +1,5 @@
+-r runtime.txt
+pytest==9.1.1
+ruff==0.16.6
+
+PyYAML==6.0.3

@@ -1,0 +1,6 @@
+*
+!tgforward
+!requirements
+**/__pycache__
+**/*.pyc
+**/*.pyo

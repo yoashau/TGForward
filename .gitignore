@@ -1,0 +1,63 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Environment variables
+.env
+.env.*
+
+# Pyrogram / Telethon session files
+*.session
+*.session-journal
+
+# Runtime generated files
+downloads/
+temp/
+*.jpg
+*.jpeg
+*.png
+*.mp4
+*.mkv
+*.webm
+*.mp3
+*.zip
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Windows Zone.Identifier (download metadata)
+*:Zone.Identifier
+
+# 允许 .env.example 进入版本库
+!.env.example
+
+# 运行时心跳文件
+.heartbeat
+
+# 持久运行数据
+data/
+
+.ready
+
+# 本地状态与工具缓存
+*.sqlite3
+*.sqlite3-*
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/

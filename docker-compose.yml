@@ -1,0 +1,23 @@
+name: tgforward
+
+services:
+  bot:
+    build:
+      context: .
+      args:
+        SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
+        APP_UID: ${APP_UID:-10001}
+        APP_GID: ${APP_GID:-10001}
+    image: tgforward:latest
+    stop_grace_period: 60s
+    restart: unless-stopped
+    env_file:
+      - ${TGFORWARD_ENV_FILE:-/etc/tgforward/tgforward.env}
+    environment:
+      DATA_DIR: /app/data
+    volumes:
+      - type: bind
+        source: ${TGFORWARD_DATA_DIR:-/var/lib/tgforward}
+        target: /app/data
+        bind:
+          create_host_path: false
