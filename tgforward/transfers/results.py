@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
 
+from tgforward.ui.i18n import tr
+
 
 class SideEffectRole(StrEnum):
     DOWNLOAD = "download"
@@ -334,20 +336,20 @@ class CommentResult:
 
     def summary(self):
         if self.empty:
-            return "该帖子暂时没有评论。"
-        text = f"评论提取：成功 {self.success} 条，失败 {self.failed} 条。"
+            return tr("该帖子暂时没有评论。")
+        text = tr("评论提取：成功 {0} 条，失败 {1} 条。", self.success, self.failed)
         if self.partial:
-            text += f"\n部分发送 {self.partial} 条。"
+            text += tr("\n部分发送 {0} 条。", self.partial)
         if self.uncertain:
-            text += f"\n发送结果无法确认 {self.uncertain} 条。"
+            text += tr("\n发送结果无法确认 {0} 条。", self.uncertain)
         if self.skipped:
-            text += f"\n未尝试发送 {self.skipped} 条。"
+            text += tr("\n未尝试发送 {0} 条。", self.skipped)
         if self.last_error:
-            text += f"\n最后错误：{self.last_error}"
+            text += tr("\n最后错误：{0}", self.last_error)
         if self.truncated:
-            text += "\n已达到单次 1000 条上限，本次未全部提取；重新提取仍会从头读取。"
+            text += tr("\n已达到单次 1000 条上限，本次未全部提取；重新提取仍会从头读取。")
         if self.incomplete:
-            text += "\n重新提取可能重复发送已成功的评论。"
+            text += tr("\n重新提取可能重复发送已成功的评论。")
         return text
 
     def observe(self, result):

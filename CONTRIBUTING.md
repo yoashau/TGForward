@@ -41,6 +41,13 @@ python -m pytest
 uv pip compile requirements/runtime.txt --python-version 3.12 -o requirements/runtime.lock
 ```
 
+## 界面语言
+
+界面文案通过 `tgforward.ui.i18n.tr` 生成，英文词条位于 `tgforward/ui/locales/en.json`。
+长文案使用语义键，并在 `zh.json` 中提供中文。动态值使用编号占位符，
+不要对源消息、用户输入或已经拼接的内容做查找替换。语言通过请求上下文隔离，后台任务继承启动时的语言。
+新增交互需覆盖两种语言、按钮路由和动态值保真测试。
+
 ## 发布
 
 版本号只维护 `tgforward/__init__.py` 中的 `__version__`，可通过

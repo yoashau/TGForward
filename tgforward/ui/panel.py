@@ -7,6 +7,8 @@ from weakref import WeakValueDictionary
 from pyrogram.errors import MessageIdInvalid, MessageNotModified
 from pyrogram.types import InlineKeyboardMarkup
 
+from tgforward.ui.i18n import tr
+
 logger = logging.getLogger(__name__)
 _panels = {}
 _persistent = WeakValueDictionary()
@@ -34,6 +36,7 @@ class Panel:
         self._message = None
         self.message = message
         self.parent = "home"
+        self.ui_language = None
         self.markup = None
         self.revision = 0
         self.closed = False
@@ -141,7 +144,7 @@ async def dismiss_keyboard(message):
         return
     raw_message = getattr(message, "_message", message)
     sent = await raw_message.reply(
-        "已收起底部按钮。",
+        tr("已收起底部按钮。"),
         quote=False,
         reply_markup=ReplyKeyboardRemove(),
     )

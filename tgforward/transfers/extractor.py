@@ -27,6 +27,7 @@ from tgforward.transfers.progress import TaskStatus
 from tgforward.transfers.results import CommentResult, MessageResult
 from tgforward.transfers.transfer import TransferError
 from tgforward.ui.dialogue import cancel_keyboard
+from tgforward.ui.i18n import tr
 from tgforward.ui.keyboards import CommentAction
 from tgforward.utils.links import MessageLink
 
@@ -123,9 +124,9 @@ async def fetch_message(
 def _progress_text(j: int, count: int, success: int, failed: int) -> str:
     # j/success/failed 都是当前链接的局部计数；多链接共享的全局 task.success
     # 只在 /status 累计，不与本链接的分母混用，避免“成功 4/2”与进度回退。
-    text = f"⏳ 正在处理 {min(j, count)}/{count}，已成功 {success}"
+    text = tr("⏳ 正在处理 {0}/{1}，已成功 {2}", min(j, count), count, success)
     if failed:
-        text += f"，失败 {failed}"
+        text += tr("，失败 {0}", failed)
     return text
 
 
@@ -178,7 +179,7 @@ async def _extract_comments(message, ref, settings, uploader, task, status, comm
         if session is None and not ref.is_private and clients.premium_started:
             session = clients.premium
         if session is None:
-            task.comment_result.last_error = "评论提取需要登录账号。"
+            task.comment_result.last_error = tr("评论提取需要登录账号。")
             return
         await discussion.extract(
             session,
@@ -212,7 +213,7 @@ async def _resolve_comment_link(ref, user_client):
     if session is None and not ref.is_private and clients.premium_started:
         session = clients.premium
     if session is None:
-        raise TransferError("提取评论链接需要先在「账号与记录」登录账号。")
+        raise TransferError(tr("提取评论链接需要先在「账号与记录」登录账号。"))
     root = await discussion.resolve_root(session, ref.chat, ref.message_id)
     # comment 是群内 ID；以群为读取和传输来源，不能复制频道原帖代替评论。
     return MessageLink(str(root.chat_id), ref.comment_id, True), session
@@ -228,14 +229,14 @@ async def extract_single(message, ref, task: Task | None = None) -> None:
         try:
             task = tasks.register(uid, "single", 1)
         except TaskAlreadyActive:
-            await message.reply(TASK_BUSY_TEXT)
+            await message.reply(tr(TASK_BUSY_TEXT))
             return
         except TaskCooldown as e:
-            await message.reply(f"⏳ 操作太频繁，请 {int(e.remaining) + 1} 秒后再试。")
+            await message.reply(tr("⏳ 操作太频繁，请 {0} 秒后再试。", int(e.remaining) + 1))
             return
 
     try:
-        status = await message.reply("⏳ 正在提取...", reply_markup=cancel_keyboard(uid))
+        status = await message.reply(tr("⏳ 正在提取..."), reply_markup=cancel_keyboard(uid))
     except BaseException:
         if own_task:
             tasks.finish(uid, task)
@@ -246,7 +247,7 @@ async def extract_single(message, ref, task: Task | None = None) -> None:
     unit.status = status
     task.status = status
     try:
-        task.reset_media("当前链接")
+        task.reset_media(tr("当前链接"))
         user_client = await clients.get_user_client(uid)
         is_post = ref.comment_id is None
         ref, user_client = await _resolve_comment_link(ref, user_client)
@@ -255,11 +256,11 @@ async def extract_single(message, ref, task: Task | None = None) -> None:
 
         msg = await fetch_message(uploader, user_client, ref, user_id=uid)
         if not msg or getattr(msg, "empty", False):
-            unit.message((ref.chat, ref.message_id)).fail_source("源消息未能读取或已删除")
+            unit.message((ref.chat, ref.message_id)).fail_source(tr("源消息未能读取或已删除"))
             await status.finish(
-                LOGIN_REQUIRED_TEXT
+                tr(LOGIN_REQUIRED_TEXT)
                 if ref.is_private and user_client is None
-                else "⚠️ 消息获取失败，可能已被删除或频道已限制访问。",
+                else tr("⚠️ 消息获取失败，可能已被删除或频道已限制访问。"),
                 "failed",
             )
             return
@@ -295,7 +296,7 @@ async def extract_single(message, ref, task: Task | None = None) -> None:
         await status.finish(
             f"✅ {outcome.summary}"
             + (
-                "\n\n💬 评论提取\n" + task.comment_result.summary()
+                tr("\n\n💬 评论提取\n") + task.comment_result.summary()
                 if task.comment_result is not None
                 else ""
             ),
@@ -305,21 +306,21 @@ async def extract_single(message, ref, task: Task | None = None) -> None:
         with suppress(Exception):
             await asyncio.wait_for(
                 status.finish(
-                    "⚠️ 任务超时，提取已停止。" if task.timed_out else "🚫 提取已停止。",
+                    tr("⚠️ 任务超时，提取已停止。") if task.timed_out else tr("🚫 提取已停止。"),
                     "stopped",
                 ),
                 timeout=5,
             )
         raise
     except TaskCancelled:
-        await status.finish("🚫 已取消。", "stopped")
+        await status.finish(tr("🚫 已取消。"), "stopped")
     except TransferError as e:
         diagnostics.record_error("single", str(e))
         await status.finish(f"⚠️ {e}", "failed")
     except Exception as e:
         logger.exception("提取出错 user=%s: %s", uid, e)
         diagnostics.record_error("single", str(e))
-        await status.finish(f"⚠️ 出错：{str(e)[:100]}", "failed")
+        await status.finish(tr("⚠️ 出错：{0}", str(e)[:100]), "failed")
     finally:
         if task.status is status:
             task.status = None
@@ -339,15 +340,15 @@ async def extract_range(message, ref, count: int, task: Task | None = None) -> N
         try:
             task = tasks.register(uid, "batch", count)
         except TaskAlreadyActive:
-            await message.reply(TASK_BUSY_TEXT)
+            await message.reply(tr(TASK_BUSY_TEXT))
             return
         except TaskCooldown as e:
-            await message.reply(f"⏳ 操作太频繁，请 {int(e.remaining) + 1} 秒后再试。")
+            await message.reply(tr("⏳ 操作太频繁，请 {0} 秒后再试。", int(e.remaining) + 1))
             return
 
     try:
         status = await message.reply(
-            f"⏳ 开始批量提取（共 {count} 条）...", reply_markup=cancel_keyboard(uid)
+            tr("⏳ 开始批量提取（共 {0} 条）...", count), reply_markup=cancel_keyboard(uid)
         )
     except BaseException:
         if own_task:
@@ -372,17 +373,17 @@ async def extract_range(message, ref, count: int, task: Task | None = None) -> N
         # 当前链接的局部计数；全局 task.current/success 由 task.advance() 单调累加，
         # 多链接共享同一 task 时不回退、不错配分母。
         failed = skipped = success_count = 0
-        task.reset_media("本批内容")
+        task.reset_media(tr("本批内容"))
         task.media_scanning = True
         prepared, prepared_groups = {}, {}
         for offset in range(count):
             task.check_cancel()
-            task.touch("读取媒体清单")
+            task.touch(tr("读取媒体清单"))
             item_id = ref.message_id + offset
             item = await fetch_message(uploader, user_client, ref, message_id=item_id, user_id=uid)
             prepared[item_id] = item
             if not item or getattr(item, "empty", False):
-                unit.message((ref.chat, item_id)).fail_source("源消息未能读取或已删除")
+                unit.message((ref.chat, item_id)).fail_source(tr("源消息未能读取或已删除"))
                 continue
             gid = getattr(item, "media_group_id", None)
             if gid:
@@ -415,12 +416,12 @@ async def extract_range(message, ref, count: int, task: Task | None = None) -> N
         last_error = ""
         for j in range(count):
             task.check_cancel()
-            task.touch("获取消息")
+            task.touch(tr("获取消息"))
             mid = ref.message_id + j
             msg = prepared.get(mid)
             if not msg or getattr(msg, "empty", False):
                 if ref.is_private and user_client is None:
-                    await status.finish(LOGIN_REQUIRED_TEXT, "failed")
+                    await status.finish(tr(LOGIN_REQUIRED_TEXT), "failed")
                     return
                 skipped += 1
                 task.advance()
@@ -480,17 +481,17 @@ async def extract_range(message, ref, count: int, task: Task | None = None) -> N
             with suppress(Exception):
                 await status.edit(_progress_text(j + 1, count, success_count, failed))
             if j + 1 < count:
-                await task.wait_or_cancel(BATCH_DELAY, "批量提取间隔")
+                await task.wait_or_cancel(BATCH_DELAY, tr("批量提取间隔"))
 
-        summary = f"✅ 批量提取完成！成功 {success_count}/{count}"
+        summary = tr("✅ 批量提取完成！成功 {0}/{1}", success_count, count)
         if skipped:
-            summary += f"\n⏭️ 未发送或已删除 {skipped} 条。"
+            summary += tr("\n⏭️ 未发送或已删除 {0} 条。", skipped)
         if failed:
-            summary += f"\n⚠️ 失败 {failed} 条，最后错误：{last_error[:80]}"
+            summary += tr("\n⚠️ 失败 {0} 条，最后错误：{1}", failed, last_error[:80])
         elif last_error:
-            summary += f"\n⚠️ 附属操作未完成：{last_error[:80]}"
+            summary += tr("\n⚠️ 附属操作未完成：{0}", last_error[:80])
         if unit.comment_results:
-            summary += "\n\n💬 评论提取\n" + unit.comments_summary()
+            summary += tr("\n\n💬 评论提取\n") + unit.comments_summary()
         await status.finish(
             summary,
             "partial" if failed or success_count < count else "success",
@@ -499,7 +500,7 @@ async def extract_range(message, ref, count: int, task: Task | None = None) -> N
         with suppress(Exception):
             await asyncio.wait_for(
                 status.finish(
-                    "⚠️ 任务超时，提取已停止。" if task.timed_out else "🚫 提取已停止。",
+                    tr("⚠️ 任务超时，提取已停止。") if task.timed_out else tr("🚫 提取已停止。"),
                     "stopped",
                 ),
                 timeout=5,
@@ -507,12 +508,14 @@ async def extract_range(message, ref, count: int, task: Task | None = None) -> N
         raise
     except TaskCancelled:
         done = success_count + failed + skipped
-        await status.finish(f"🚫 已取消，进度 {done}/{count}，成功 {success_count}", "stopped")
+        await status.finish(
+            tr("🚫 已取消，进度 {0}/{1}，成功 {2}", done, count, success_count), "stopped"
+        )
     except TransferError as e:
         await status.finish(f"⚠️ {e}", "failed")
     except Exception as e:
         logger.exception("批量提取出错 user=%s: %s", uid, e)
-        await status.finish(f"⚠️ 出错：{str(e)[:100]}", "failed")
+        await status.finish(tr("⚠️ 出错：{0}", str(e)[:100]), "failed")
     finally:
         if task.status is status:
             task.status = None

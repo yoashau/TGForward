@@ -5,16 +5,17 @@ from pyrogram import filters
 from tgforward.runtime import tasks
 from tgforward.telegram.clients import bot
 from tgforward.ui import dialogue, state
+from tgforward.ui.i18n import tr
 from tgforward.ui.interaction import interaction
 
 
 async def _cancel(uid):
     cleared = []
     if await dialogue.clear(uid):
-        cleared.append("填写操作")
+        cleared.append(tr("填写操作"))
     if tasks.request_cancel(uid):
-        cleared.append("提取任务")
-    return f"✅ 已取消：{'、'.join(cleared)}。" if cleared else "ℹ️ 当前没有进行中的操作。"
+        cleared.append(tr("提取任务"))
+    return tr("✅ 已取消：{0}。", "、".join(cleared)) if cleared else tr("ℹ️ 当前没有进行中的操作。")
 
 
 @bot.on_message(filters.command(["cancel", "cancle"]) & filters.private)
@@ -28,10 +29,10 @@ async def result_callback(client, query):
     # 结果按钮只确认状态，绝不取消用户后来启动的新任务。
     parts = query.data.split(":")
     if len(parts) != 4 or parts[2] != str(query.from_user.id):
-        await query.answer("这是其他用户的提取结果。", show_alert=True)
+        await query.answer(tr("这是其他用户的提取结果。"), show_alert=True)
         return
     await query.answer(
-        "提取消息成功。" if parts[3] == "success" else "该次提取已结束，请查看结果说明。"
+        tr("提取消息成功。") if parts[3] == "success" else tr("该次提取已结束，请查看结果说明。")
     )
 
 
@@ -42,22 +43,22 @@ async def cancel_callback(client, query):
         _, _, uid, token = query.data.split(":")
         uid = int(uid)
     except (ValueError, TypeError):
-        await query.answer("按钮无效。", show_alert=True)
+        await query.answer(tr("按钮无效。"), show_alert=True)
         return
     if uid != query.from_user.id:
-        await query.answer("这是其他用户的操作。", show_alert=True)
+        await query.answer(tr("这是其他用户的操作。"), show_alert=True)
         return
     st, task = state.get(uid), tasks.get(uid)
     if token not in [x.token for x in (st, task) if x is not None]:
-        await query.answer("该操作已结束，此按钮已过期。")
+        await query.answer(tr("该操作已结束，此按钮已过期。"))
         return
-    await query.answer("正在取消…")
+    await query.answer(tr("正在取消…"))
     if st is not None and st.token == token:
         await dialogue.clear(uid)
-        text = "✅ 已退出当前填写。"
+        text = tr("✅ 已退出当前填写。")
     else:
         tasks.request_cancel(uid)
         if task is not None and task.kind == "comments":
             return  # 评论管理消息自行显示终态，不另发临时反馈。
-        text = "✅ 已请求停止提取任务。"
+        text = tr("✅ 已请求停止提取任务。")
     await query.message.reply(text)

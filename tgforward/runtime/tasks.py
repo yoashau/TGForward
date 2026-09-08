@@ -15,6 +15,7 @@ from uuid import uuid4
 from tgforward.config import TASK_STALL_TIMEOUT, USER_COOLDOWN
 from tgforward.runtime import lifecycle
 from tgforward.transfers.results import CommentResult, ExtractionUnit
+from tgforward.ui.i18n import tr
 
 
 class TaskAlreadyActive(Exception):
@@ -146,14 +147,20 @@ class Task:
         total = len(self.media_known)
         downloads, downloaded = len(self.media_downloads), len(self.media_downloaded)
         pending = len(self.media_downloads - self.media_downloaded - self.media_failed)
-        text = (
-            f"📦 {self.media_scope}：媒体 {total} 个，已发送 {sent} 个，失败 {failed} 个"
-            f"\n⬇️ 需下载 {downloads} 个，已下载 {downloaded} 个，待下载 {pending} 个"
+        text = tr(
+            "tasks.media_progress",
+            tr(self.media_scope),
+            total,
+            sent,
+            failed,
+            downloads,
+            downloaded,
+            pending,
         )
         if unknown:
-            text += f"\n⚠️ {len(unknown)} 个媒体发送结果无法确认。"
+            text += tr("\n⚠️ {0} 个媒体发送结果无法确认。", len(unknown))
         if self.media_scanning:
-            text += "\n正在读取清单，数量可能增加。"
+            text += tr("\n正在读取清单，数量可能增加。")
         return text
 
     def reset_media(self, scope):
@@ -313,8 +320,14 @@ def launch(task: Task, work, notify) -> None:
                 return
             if idle >= min(60, TASK_STALL_TIMEOUT / 2) and not warned:
                 warned = True
-                kind = "评论提取" if task.kind == "comments" else "消息提取"
-                await say(f"⏳ {kind}在「{task.stage}」阶段暂时没有新进度，可发送 /cancel 停止。")
+                kind = tr("评论提取") if task.kind == "comments" else tr("消息提取")
+                await say(
+                    tr(
+                        "⏳ {0}在「{1}」阶段暂时没有新进度，可发送 /cancel 停止。",
+                        kind,
+                        tr(task.stage),
+                    )
+                )
             if idle < 30:
                 warned = False
 
@@ -340,17 +353,17 @@ def launch(task: Task, work, notify) -> None:
                 task.stage,
             )
             await terminal(
-                "⚠️ 任务长时间没有进度，已停止并释放；请重新发送链接。"
+                tr("⚠️ 任务长时间没有进度，已停止并释放；请重新发送链接。")
                 if task.timed_out
-                else "💬 评论提取已停止，可点击按钮重试。"
+                else tr("💬 评论提取已停止，可点击按钮重试。")
                 if task.kind == "comments"
-                else "🚫 提取任务已停止，可以重新发送链接。"
+                else tr("🚫 提取任务已停止，可以重新发送链接。")
             )
         except Exception:
             logger.exception(
                 "task=%s user=%s stage=%s failed", task.token, task.user_id, task.stage
             )
-            await terminal("⚠️ 任务执行出错，已释放；请重试或提供操作时间用于排查。")
+            await terminal(tr("⚠️ 任务执行出错，已释放；请重试或提供操作时间用于排查。"))
         finally:
             watcher.cancel()
             with suppress(asyncio.CancelledError):

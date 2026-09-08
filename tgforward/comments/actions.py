@@ -8,6 +8,7 @@ from pyrogram.errors import MessageNotModified
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from tgforward.transfers.progress import TaskStatus
+from tgforward.ui.i18n import ENGLISH, tr
 from tgforward.utils.text import (
     RichText,
     append_text,
@@ -48,7 +49,9 @@ class CommentButton(TaskStatus):
         self.key = (self.chat.id, self.id)
         original = message_text(message)
         # 重试替换上一次评论状态，不把它并入原帖结果、反复追加。
-        base = str(original).rsplit(SECTION, 1)[0]
+        base = str(original)
+        for section in (SECTION, ENGLISH[SECTION]):
+            base = base.rsplit(section, 1)[0]
         self.base_text = RichText(base, original.entities)
         self.lock = asyncio.Lock()
 
@@ -69,9 +72,11 @@ class CommentButton(TaskStatus):
                     owner = (
                         self.task.user_id if self.task is not None else str(callback).split(":")[-1]
                     )
-                    rerun.append(InlineKeyboardButton("🔄 重新提取评论", callback_data=callback))
+                    rerun.append(
+                        InlineKeyboardButton(tr("🔄 重新提取评论"), callback_data=callback)
+                    )
                     callback = f"flow:result:{owner}:comments_success"
-                output.append(InlineKeyboardButton(LABELS[outcome], callback_data=callback))
+                output.append(InlineKeyboardButton(tr(LABELS[outcome]), callback_data=callback))
             rows.append(output)
         if rerun:
             rows.append(rerun)
@@ -80,11 +85,11 @@ class CommentButton(TaskStatus):
     async def _render(self, text):
         # 字节进度带有加粗标记；评论区域使用纯文本，原帖实体独立保留。
         detail = str(text).replace("**", "")
-        if detail.startswith("评论提取："):
-            detail = detail.removeprefix("评论提取：")
+        if detail.startswith(tr("评论提取：")):
+            detail = detail.removeprefix(tr("评论提取："))
         if self.task is not None:
             detail += "\n\n" + self.task.media_progress()
-        section = truncate_text("💬 评论提取\n" + detail, 1600)
+        section = truncate_text(tr("💬 评论提取\n") + detail, 1600)
         base = truncate_text(self.base_text, 4096 - utf16_len(section) - 2)
         body = append_text(base, section)
 
@@ -126,7 +131,7 @@ class CommentButton(TaskStatus):
             if self.outcome is not None or not self._can_render():
                 return self
             self.markup = self._keyboard("running")
-            await self._render(text or DETAILS["running"])
+            await self._render(text or tr(DETAILS["running"]))
         return self
 
     async def finish(self, text="", outcome="success"):
@@ -138,7 +143,7 @@ class CommentButton(TaskStatus):
             if self.outcome != outcome or self.terminal_rendered or not self._can_render():
                 return self
             self.markup = self._keyboard(outcome)
-            self.terminal_rendered = await self._render(text or DETAILS[outcome])
+            self.terminal_rendered = await self._render(text or tr(DETAILS[outcome]))
         return self
 
     async def edit(self, text, **kwargs):

@@ -18,6 +18,7 @@ from tgforward.telegram.clients import (
     safe_connect_client,
 )
 from tgforward.ui import dialogue, state
+from tgforward.ui.i18n import tr
 from tgforward.ui.interaction import interaction
 
 _BOT_TOKEN_RE = re.compile(r"^\d{6,}:[A-Za-z0-9_-]{20,}$")
@@ -36,7 +37,7 @@ async def bind_bot(client, message):
         message,
         "helper",
         "token",
-        "🤖 **绑定辅助机器人**\n\n请发送 @BotFather 提供的 Bot Token。\n验证通过后才会替换原绑定。",
+        tr("auth.helper_prompt"),
     )
     if len(parts) == 2:
         await _bind(message, parts[1].strip())
@@ -62,15 +63,15 @@ async def _bind(message, token):
     with contextlib.suppress(Exception):
         await message.delete()
     if st.data.get("processing"):
-        await dialogue.prompt(message, "⏳ 正在验证上一条 Token，请稍候。")
+        await dialogue.prompt(message, tr("⏳ 正在验证上一条 Token，请稍候。"))
         return
     if not _BOT_TOKEN_RE.fullmatch(token):
         await dialogue.prompt(
-            message, "❌ Token 格式不正确，请重新发送 @BotFather 提供的完整 Token。"
+            message, tr("❌ Token 格式不正确，请重新发送 @BotFather 提供的完整 Token。")
         )
         return
     if token == BOT_TOKEN:
-        await dialogue.prompt(message, "❌ 请绑定另一台辅助机器人，而不是当前主机器人。")
+        await dialogue.prompt(message, tr("❌ 请绑定另一台辅助机器人，而不是当前主机器人。"))
         return
     st.data["processing"] = True
     candidate = _client(f"validate-helper:{uid}", bot_token=token, no_updates=True)
@@ -82,25 +83,27 @@ async def _bind(message, token):
         if state.get(uid) is not st:
             return
         if not me.is_bot:
-            await dialogue.prompt(message, "❌ 该凭据不是机器人 Token。")
+            await dialogue.prompt(message, tr("❌ 该凭据不是机器人 Token。"))
             return
         async with lifecycle.user_lock(uid):
             if state.get(uid) is not st or uid in lifecycle.revoked:
                 return
             if not await save_helper_token(uid, token):
-                await dialogue.prompt(message, "❌ 保存失败，原绑定未替换，请重试。")
+                await dialogue.prompt(message, tr("❌ 保存失败，原绑定未替换，请重试。"))
                 return
             await remove_helper_bot(uid)
             state.clear(uid)
         await message.reply(
-            f"✅ 辅助机器人 @{me.username or me.id} 已绑定。\n"
-            "请先向它发送 /start，或把它加入发送目标群组。"
+            tr(
+                "✅ 辅助机器人 @{0} 已绑定。\n请先向它发送 /start，或把它加入发送目标群组。",
+                me.username or me.id,
+            )
         )
     except Exception:
         # Telegram 异常可能带凭据，不记录或回显 Token。
         if state.get(uid) is st:
             await dialogue.prompt(
-                message, "❌ Token 验证失败或连接超时，请检查 Token 后重试。原绑定未替换。"
+                message, tr("❌ Token 验证失败或连接超时，请检查 Token 后重试。原绑定未替换。")
             )
     finally:
         st.data["processing"] = False
@@ -126,12 +129,12 @@ async def unbind_bot(client, message):
 
 async def _unbind_locked(uid, message):
     if not await get_helper_token(uid):
-        await message.reply("ℹ️ 当前未绑定辅助机器人，无需解绑。可使用 /bindbot 开始绑定。")
+        await message.reply(tr("ℹ️ 当前未绑定辅助机器人，无需解绑。可使用 /bindbot 开始绑定。"))
         return
     if await remove_helper_token(uid):
         await remove_helper_bot(uid)
         if state.get(uid) and state.get(uid).kind == "helper":
             await dialogue.clear(uid)
-        await message.reply("✅ 辅助机器人已解绑。")
+        await message.reply(tr("✅ 辅助机器人已解绑。"))
     else:
-        await message.reply("❌ 操作失败，请稍后再试。")
+        await message.reply(tr("❌ 操作失败，请稍后再试。"))

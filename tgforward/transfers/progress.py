@@ -13,6 +13,7 @@ from pyrogram.errors import MessageNotModified
 
 from tgforward.runtime.tasks import CancelReason, Task
 from tgforward.transfers.results import SideEffectRole
+from tgforward.ui.i18n import tr
 
 
 def stop_keyboard(task):
@@ -22,7 +23,7 @@ def stop_keyboard(task):
         [
             [
                 InlineKeyboardButton(
-                    "⏹ 停止提取评论" if task.kind == "comments" else "⏹ 停止提取消息",
+                    tr("⏹ 停止提取评论") if task.kind == "comments" else tr("⏹ 停止提取消息"),
                     callback_data=f"flow:cancel:{task.user_id}:{task.token}",
                 )
             ]
@@ -34,12 +35,12 @@ def result_keyboard(task, outcome, comment_action=None):
     from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
     label = {
-        "success": "✅ 提取消息成功",
-        "partial": "⚠️ 提取结束，部分未完成",
-        "incomplete": "⚠️ 消息提取未完成",
-        "uncertain": "⚠️ 消息发送结果无法确认",
-        "failed": "⚠️ 提取失败",
-        "stopped": "⏹ 提取已停止",
+        "success": tr("✅ 提取消息成功"),
+        "partial": tr("⚠️ 提取结束，部分未完成"),
+        "incomplete": tr("⚠️ 消息提取未完成"),
+        "uncertain": tr("⚠️ 消息发送结果无法确认"),
+        "failed": tr("⚠️ 提取失败"),
+        "stopped": tr("⏹ 提取已停止"),
     }[outcome]
     from tgforward.ui.keyboards import comment_button
 
@@ -51,12 +52,12 @@ def result_keyboard(task, outcome, comment_action=None):
             if outcome == "success":
                 row.append(comment_button(comment_action, task.user_id))
         else:
-            label = "⚠️ 评论未全部提取" if comments.incomplete else "✅ 评论提取完成"
+            label = tr("⚠️ 评论未全部提取") if comments.incomplete else tr("✅ 评论提取完成")
             row.append(
                 InlineKeyboardButton(label, callback_data=f"flow:result:{task.user_id}:comments")
             )
             button = comment_button(comment_action, task.user_id)
-            button.text = "🔄 重新提取评论"
+            button.text = tr("🔄 重新提取评论")
             rows.append([button])
     return InlineKeyboardMarkup(rows)
 
@@ -141,10 +142,10 @@ class TaskStatus:
                 )
                 if resolved != outcome:
                     heading = {
-                        "success": "✅ 消息提取完成",
-                        "failed": "⚠️ 消息提取失败",
-                        "incomplete": "⚠️ 消息提取未完成",
-                        "uncertain": "⚠️ 消息发送结果无法确认",
+                        "success": tr("✅ 消息提取完成"),
+                        "failed": tr("⚠️ 消息提取失败"),
+                        "incomplete": tr("⚠️ 消息提取未完成"),
+                        "uncertain": tr("⚠️ 消息发送结果无法确认"),
                     }[resolved]
                     text = heading + "\n" + text
                 outcome = resolved
@@ -152,12 +153,16 @@ class TaskStatus:
                 total = sum(r.delivery.total_parts for r in results)
                 if outcome in ("incomplete", "uncertain"):
                     text += (
-                        f"\n已确认发送 {delivered}/{total} 部分。重新提取可能造成重复发送。"
+                        tr(
+                            "\n已确认发送 {0}/{1} 部分。重新提取可能造成重复发送。",
+                            delivered,
+                            total,
+                        )
                         if total
-                        else "\n尚未完成源消息解析。"
+                        else tr("\n尚未完成源消息解析。")
                     )
-                if self.task.comment_result is not None and "💬 评论提取" not in text:
-                    text += "\n\n💬 评论提取\n" + (
+                if self.task.comment_result is not None and tr("💬 评论提取") not in text:
+                    text += tr("\n\n💬 评论提取\n") + (
                         unit.comments_summary() or self.task.comment_result.summary()
                     )
             if self.outcome is None:
@@ -244,11 +249,19 @@ def make_progress(
                 eta = "00:00"
 
             mb = 1048576
-            text = (
-                f"**{label}...**\n\n{bar}\n\n"
-                f"**完成度：** {current / mb:.2f} MB / {total / mb:.2f} MB（{percent:.2f}%）\n"
-                f"**速度：** {speed:.2f} MB/s\n"
-                f"**剩余时间：** {eta}"
+            text = tr(
+                (
+                    "**{0}...**\n\n{1}\n\n**完成度：** {2} MB / "
+                    "{3} MB（{4}%）\n**速度：** {5} MB/s\n**剩余时"
+                    "间：** {6}"
+                ),
+                tr(label),
+                bar,
+                format(current / mb, ".2f"),
+                format(total / mb, ".2f"),
+                format(percent, ".2f"),
+                format(speed, ".2f"),
+                eta,
             )
             with contextlib.suppress(Exception):
                 if status_message is not None:

@@ -6,6 +6,7 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from tgforward.runtime import tasks
 from tgforward.ui import state
+from tgforward.ui.i18n import tr
 
 
 def cancel_keyboard(uid: int):
@@ -18,7 +19,7 @@ def cancel_keyboard(uid: int):
         [
             [
                 InlineKeyboardButton(
-                    "↩️ 退出填写" if st else "⏹ 停止提取消息",
+                    tr("↩️ 退出填写") if st else tr("⏹ 停止提取消息"),
                     callback_data=f"flow:cancel:{uid}:{token}",
                 )
             ]
@@ -68,9 +69,9 @@ async def prompt(message, text: str, *, uid: int | None = None):
     return await message.reply(
         text.rstrip()
         + (
-            "\n\n👇 按上方提示发送；点「返回」可退出。"
+            tr("\n\n👇 按上方提示发送；点「返回」可退出。")
             if getattr(message, "_panel", None)
-            else "\n\n👇 请直接发送内容；点「退出填写」可取消。"
+            else tr("\n\n👇 请直接发送内容；点「退出填写」可取消。")
         ),
         reply_markup=cancel_keyboard(message.from_user.id if uid is None else uid),
     )
@@ -111,7 +112,7 @@ def input_guard(kind):
             if st is None or st.kind != kind:
                 return
             if st.data.get("processing"):
-                await processing_notice(message, "⏳ 上一次输入仍在处理，请稍候。")
+                await processing_notice(message, tr("⏳ 上一次输入仍在处理，请稍候。"))
                 return
             st.data["processing"] = True
             try:
@@ -126,6 +127,6 @@ def input_guard(kind):
 
 async def require_idle(message):
     if tasks.is_active(message.from_user.id):
-        await message.reply("⏳ 提取任务仍在运行，请等待结束，或 /cancel 后等任务停止再操作。")
+        await message.reply(tr("⏳ 提取任务仍在运行，请等待结束，或 /cancel 后等任务停止再操作。"))
         return False
     return True

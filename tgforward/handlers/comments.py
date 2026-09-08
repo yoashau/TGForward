@@ -8,6 +8,7 @@ from tgforward.runtime import lifecycle
 from tgforward.storage.users import is_whitelisted
 from tgforward.telegram import clients as clients_registry
 from tgforward.telegram.clients import bot
+from tgforward.ui.i18n import tr
 from tgforward.ui.interaction import interaction
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,7 @@ async def _pick_session(uid: int, chat_ref: str):
 async def on_fetch_comments(client, query):
     uid = query.from_user.id
     if not await is_whitelisted(uid):
-        await query.answer("⚠️ 你没有使用权限。", show_alert=True)
+        await query.answer(tr("⚠️ 你没有使用权限。"), show_alert=True)
         return
 
     try:
@@ -46,12 +47,12 @@ async def on_fetch_comments(client, query):
         if msg_id <= 0 or owner != uid:
             raise ValueError
     except (ValueError, TypeError):
-        await query.answer("请使用你自己的任务管理消息中的评论按钮。", show_alert=True)
+        await query.answer(tr("请使用你自己的任务管理消息中的评论按钮。"), show_alert=True)
         return
     from tgforward.transfers.progress import is_task_result
 
     if not is_task_result(query.message) or (len(parts) == 3 and query.message.chat.id != uid):
-        await query.answer("请重新提取原帖，再使用任务管理消息中的评论按钮。", show_alert=True)
+        await query.answer(tr("请重新提取原帖，再使用任务管理消息中的评论按钮。"), show_alert=True)
         return
 
     from tgforward.comments import discussion
@@ -63,34 +64,34 @@ async def on_fetch_comments(client, query):
     button = CommentButton(client or bot, query.message)
     active = tasks.get(uid)
     if active and (active.comment_target == button.key or active.kind == "comments"):
-        await query.answer("评论正在提取中")
+        await query.answer(tr("评论正在提取中"))
         return
     if state.is_busy(uid):
-        await query.answer("请先完成当前输入，或发送 /cancel 退出。", show_alert=True)
+        await query.answer(tr("请先完成当前输入，或发送 /cancel 退出。"), show_alert=True)
         return
     session = await _pick_session(uid, chat_ref)
     if session is None:
         await query.answer(
-            "🔐 请先在机器人私聊中发送 /login，登录能查看评论的账号。", show_alert=True
+            tr("🔐 请先在机器人私聊中发送 /login，登录能查看评论的账号。"), show_alert=True
         )
         return
     try:
         task = tasks.register(uid, "comments", 1)
     except tasks.TaskAlreadyActive:
-        await query.answer("已有提取任务，请等待完成，或发送 /cancel 取消。", show_alert=True)
+        await query.answer(tr("已有提取任务，请等待完成，或发送 /cancel 取消。"), show_alert=True)
         return
     except tasks.TaskCooldown as exc:
-        await query.answer(f"请 {int(exc.remaining) + 1} 秒后重试。")
+        await query.answer(tr("请 {0} 秒后重试。", int(exc.remaining) + 1))
         return
     button.task = task
-    task.media_scope = "本次评论"
+    task.media_scope = tr("本次评论")
     task.comment_target = button.key
     task.active_unit = task.extraction_unit(("comments", chat_ref, msg_id))
     task.active_unit.status = button
     button.unit = task.active_unit
     task.status = button
     try:
-        await query.answer("提取评论会从头读取，已发送内容可能重复；可点击停止。")
+        await query.answer(tr("提取评论会从头读取，已发送内容可能重复；可点击停止。"))
         if task.cancel_requested:
             task.comment_target = None
             tasks.finish(uid, task)
@@ -105,7 +106,7 @@ async def on_fetch_comments(client, query):
 
     async def work():
         result = "stopped"
-        summary = "评论提取已停止，可重新提取，已发送评论可能重复。"
+        summary = tr("评论提取已停止，可重新提取，已发送评论可能重复。")
         try:
             settings = await load_user_settings(uid)
             uploader = await clients_registry.get_upload_bot(uid)
@@ -118,12 +119,12 @@ async def on_fetch_comments(client, query):
             raise
         except Exception as exc:
             result = "failed"
-            summary = f"评论提取失败：{str(exc)[:300]}"
+            summary = tr("评论提取失败：{0}", str(exc)[:300])
             logger.exception("评论提取失败 task=%s", task.token)
         finally:
             task.comment_target = None
             if task.timed_out:
-                summary = "⚠️ 评论提取长时间没有进度，已停止。"
+                summary = tr("⚠️ 评论提取长时间没有进度，已停止。")
             if task.cancel_reason != tasks.CancelReason.REVOKED:
                 await button.finish(summary, outcome=result)
             task.status = None

@@ -15,6 +15,7 @@ from pyrogram.types import Message
 from tgforward.runtime.tasks import TaskCancelled
 from tgforward.telegram.wait import retry_flood, task_scope
 from tgforward.transfers import transfer
+from tgforward.ui.i18n import tr
 
 logger = logging.getLogger(__name__)
 MAX_REPLIES = 1000
@@ -40,17 +41,17 @@ async def inspect_post(client, chat_ref, source=None, media_group=None, *, messa
         chat_ref = int(chat_ref)
     if source is None:
         source = await _read_stage(
-            lambda: client.get_messages(chat_ref, message_id), "读取评论原帖"
+            lambda: client.get_messages(chat_ref, message_id), tr("读取评论原帖")
         )
     if not source or getattr(source, "empty", False):
-        raise transfer.TransferError("评论原帖已删除，或当前账号无权读取。")
+        raise transfer.TransferError(tr("评论原帖已删除，或当前账号无权读取。"))
     ids = [source.id]
     if getattr(source, "media_group_id", None):
         group = media_group or await _read_stage(
-            lambda: client.get_media_group(chat_ref, source.id), "读取完整相册"
+            lambda: client.get_media_group(chat_ref, source.id), tr("读取完整相册")
         )
         ids = sorted({source.id, *(m.id for m in group)})
-    peer = await _read_stage(lambda: client.resolve_peer(chat_ref), "识别评论来源")
+    peer = await _read_stage(lambda: client.resolve_peer(chat_ref), tr("识别评论来源"))
     result = await _read_stage(
         lambda: client.invoke(
             raw.functions.channels.GetMessages(
@@ -60,7 +61,7 @@ async def inspect_post(client, chat_ref, source=None, media_group=None, *, messa
                 id=[raw.types.InputMessageID(id=mid) for mid in ids],
             )
         ),
-        "确认相册评论入口",
+        tr("确认相册评论入口"),
     )
     kind = getattr(getattr(source, "chat", None), "type", None)
     marked = [
@@ -92,18 +93,18 @@ def explain_error(exc, stage):
     kind = type(exc).__name__
     reasons = {
         "ChannelPrivate": (
-            "当前登录账号无权访问频道或关联讨论组；请用同一账号打开来源和评论区，确认访问权限。"
+            tr("当前登录账号无权访问频道或关联讨论组；请用同一账号打开来源和评论区，确认访问权限。")
         ),
-        "UserBannedInChannel": "当前登录账号在关联讨论组中被限制。",
-        "ChannelInvalid": "频道或讨论组标识未被当前账号正确解析；这不等同于未加入群组。",
-        "PeerIdInvalid": "当前账号尚未正确识别关联讨论组。",
-        "MessageIdInvalid": "原帖或讨论串已删除，或没有可读取的评论串。",
-        "MsgIdInvalid": "原帖或讨论串已删除，或没有可读取的评论串。",
-        "BotMethodInvalid": "读取评论需要登录用户账号，机器人身份不支持该接口。",
-        "TimeoutError": "Telegram 请求超时，请稍后重试。",
+        "UserBannedInChannel": tr("当前登录账号在关联讨论组中被限制。"),
+        "ChannelInvalid": tr("频道或讨论组标识未被当前账号正确解析；这不等同于未加入群组。"),
+        "PeerIdInvalid": tr("当前账号尚未正确识别关联讨论组。"),
+        "MessageIdInvalid": tr("原帖或讨论串已删除，或没有可读取的评论串。"),
+        "MsgIdInvalid": tr("原帖或讨论串已删除，或没有可读取的评论串。"),
+        "BotMethodInvalid": tr("读取评论需要登录用户账号，机器人身份不支持该接口。"),
+        "TimeoutError": tr("Telegram 请求超时，请稍后重试。"),
     }
-    reason = reasons.get(kind, "发生程序或接口异常，具体堆栈已写入日志；未将它判定为权限问题。")
-    return f"评论提取停在「{stage}」（{kind}）：{reason}"
+    reason = reasons.get(kind, tr("发生程序或接口异常，具体堆栈已写入日志；未将它判定为权限问题。"))
+    return tr("评论提取停在「{0}」（{1}）：{2}", stage, kind, reason)
 
 
 async def _read_stage(make_call, stage):
@@ -143,7 +144,7 @@ async def _root_from_result(client, result, expected_group=None):
     peer = (
         raw.types.InputPeerChannel(channel_id=group.id, access_hash=access_hash)
         if access_hash is not None
-        else await _read_stage(lambda: client.resolve_peer(chat_id), "识别讨论组")
+        else await _read_stage(lambda: client.resolve_peer(chat_id), tr("识别讨论组"))
     )
     return ThreadRoot(
         chat_id,
@@ -182,7 +183,7 @@ async def resolve_root(client, chat_ref, message_id):
                 lambda candidate=candidate: client.invoke(
                     raw.functions.messages.GetDiscussionMessage(peer=post.peer, msg_id=candidate)
                 ),
-                stage="定位关联讨论组",
+                stage=tr("定位关联讨论组"),
             )
         except (MessageIdInvalid, MsgIdInvalid) as exc:
             logger.info(
@@ -197,7 +198,7 @@ async def resolve_root(client, chat_ref, message_id):
         except Exception as exc:
             # 权限/网络异常不是 ID 错误，不逐个成员重复撞同一错误。
             logger.exception("评论入口解析失败 input=%s candidate=%s", message_id, candidate)
-            raise transfer.TransferError(explain_error(exc, "定位关联讨论组")) from exc
+            raise transfer.TransferError(explain_error(exc, tr("定位关联讨论组"))) from exc
         root = await _root_from_result(client, result, expected_group)
         if root is not None:
             logger.info(
@@ -212,9 +213,7 @@ async def resolve_root(client, chat_ref, message_id):
     logger.warning(
         "评论入口未确认 input=%s album=%s attempted=%s", message_id, post.album, attempts
     )
-    raise transfer.TransferError(
-        "Telegram 未确认可读取的评论串，已检查同相册候选入口；帖子可能未开放评论或讨论根已删除。"
-    )
+    raise transfer.TransferError(tr("comments.thread_unavailable"))
 
 
 async def collect(client, chat_ref, message_id, task=None):
@@ -232,7 +231,7 @@ async def _collect(client, chat_ref, message_id, task=None):
     while True:
         if task:
             task.check_cancel()
-            task.touch("读取评论区")
+            task.touch(tr("读取评论区"))
         page = await _read_stage(
             lambda offset=offset: client.invoke(
                 raw.functions.messages.GetReplies(
@@ -247,7 +246,7 @@ async def _collect(client, chat_ref, message_id, task=None):
                     hash=0,
                 )
             ),
-            "读取评论消息",
+            tr("读取评论消息"),
         )
         messages = list(getattr(page, "messages", None) or [])
         if not messages:
@@ -256,7 +255,7 @@ async def _collect(client, chat_ref, message_id, task=None):
         chats = {c.id: c for c in getattr(page, "chats", [])}
         new = [m for m in messages if m.id not in seen]
         if not new:
-            raise transfer.TransferError("评论分页没有前进，请重新提取；未报告为完整成功。")
+            raise transfer.TransferError(tr("评论分页没有前进，请重新提取；未报告为完整成功。"))
         for msg in new:
             seen.add(msg.id)
             if msg.id in root.root_ids or getattr(msg, "action", None) is not None:
@@ -265,7 +264,7 @@ async def _collect(client, chat_ref, message_id, task=None):
                 lambda msg=msg, users=users, chats=chats: Message._parse(
                     client, msg, users, chats, replies=0
                 ),
-                "解析评论消息",
+                tr("解析评论消息"),
             )
             if not parsed or getattr(parsed, "empty", False):
                 continue
@@ -282,7 +281,7 @@ async def _collect(client, chat_ref, message_id, task=None):
                 return sorted(trimmed, key=lambda m: m.id), True
         oldest = min(m.id for m in messages)
         if offset and oldest >= offset:
-            raise transfer.TransferError("评论分页游标异常，请重试。")
+            raise transfer.TransferError(tr("评论分页游标异常，请重试。"))
         offset = oldest
         if len(messages) < 100:
             return sorted(result, key=lambda m: m.id), False
@@ -294,10 +293,10 @@ async def extract(session, uploader, chat_ref, message_id, settings, user_chat_i
     result = task.comment_result = CommentResult()
     unit = task.active_unit or task.extraction_unit(("comments", chat_ref, message_id))
     unit.comment_results.append(result)
-    task.touch("读取评论区")
+    task.touch(tr("读取评论区"))
     task.media_scanning = True
     try:
-        await transfer._edit(status, "🔎 正在读取评论区……")
+        await transfer._edit(status, tr("🔎 正在读取评论区……"))
         replies, result.truncated = await collect(session, chat_ref, message_id, task)
     except BaseException as exc:
         result.stopped = isinstance(exc, (TaskCancelled, asyncio.CancelledError))
@@ -305,9 +304,9 @@ async def extract(session, uploader, chat_ref, message_id, settings, user_chat_i
         raise
     finally:
         task.media_scanning = False
-    await transfer._edit(status, f"已读取 {len(replies)} 条评论，准备提取文字和媒体……")
+    await transfer._edit(status, tr("已读取 {0} 条评论，准备提取文字和媒体……", len(replies)))
     result.empty = not replies
-    task.media_scope = "本次评论" if task.kind == "comments" else "当前内容（含已读取评论）"
+    task.media_scope = tr("本次评论") if task.kind == "comments" else tr("当前内容（含已读取评论）")
     groups = {}
     for message in replies:
         task.discover(message, not bool(getattr(message.chat, "username", None)))
@@ -324,7 +323,7 @@ async def extract(session, uploader, chat_ref, message_id, settings, user_chat_i
         group = groups.get(source_key)
         try:
             task.check_cancel()
-            task.touch("提取评论附件与文字")
+            task.touch(tr("提取评论附件与文字"))
             sent = await transfer.transfer_message(
                 uploader,
                 session,
@@ -356,9 +355,13 @@ async def extract(session, uploader, chat_ref, message_id, settings, user_chat_i
             )
             await transfer._edit(
                 status,
-                f"已读取 {len(replies)} 条评论；已发送 {result.success} 条，"
-                f"失败 {result.failed} 条，"
-                f"待发送 {max(0, len(replies) - counted)} 条。",
+                tr(
+                    "已读取 {0} 条评论；已发送 {1} 条，失败 {2} 条，待发送 {3} 条。",
+                    len(replies),
+                    result.success,
+                    result.failed,
+                    max(0, len(replies) - counted),
+                ),
             )
             last_update = time.monotonic()
     summary = result.summary()

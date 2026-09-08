@@ -24,6 +24,7 @@ from tgforward.telegram.clients import bot
 from tgforward.transfers.extractor import extract_range, extract_single
 from tgforward.ui import state
 from tgforward.ui.dialogue import cancel_keyboard
+from tgforward.ui.i18n import tr
 from tgforward.ui.interaction import interaction
 from tgforward.utils.links import MessageLink, find_links, parse_batch_count, parse_link
 
@@ -194,7 +195,7 @@ async def smart_router(client, message):
 
     if not plan:
         if forward_ref is None:
-            await message.reply("⚠️ 未能识别有效的 Telegram 消息链接。")
+            await message.reply(tr("⚠️ 未能识别有效的 Telegram 消息链接。"))
         return
 
     gid = getattr(message, "media_group_id", None)
@@ -206,13 +207,15 @@ async def smart_router(client, message):
         task = tasks.register(uid, "batch", total)
     except TaskAlreadyActive:
         await message.reply(
-            f"⏳ 已有任务正在「{tasks.get(uid).stage}」阶段处理。"
-            "当前请求未加入，请完成后重新提取，或 /cancel 停止。",
+            tr(
+                "tasks.busy",
+                tr(tasks.get(uid).stage),
+            ),
             reply_markup=cancel_keyboard(uid),
         )
         return
     except TaskCooldown as e:
-        await message.reply(f"⏳ 操作太频繁，请 {int(e.remaining) + 1} 秒后再试。")
+        await message.reply(tr("⏳ 操作太频繁，请 {0} 秒后再试。", int(e.remaining) + 1))
         return
 
     _mark_group_handled(uid, gid)
@@ -234,14 +237,16 @@ async def _run_plan(message, plan, task):
             except Exception as e:
                 logger.exception("处理链接出错 %s: %s", url, e)
                 diagnostics.record_error("router", str(e))
-                await message.reply(f"⚠️ 处理链接时出错：`{url[:80]}`\n错误信息：{str(e)[:100]}")
+                await message.reply(
+                    tr("⚠️ 处理链接时出错：`{0}`\n错误信息：{1}", url[:80], str(e)[:100])
+                )
 
             task.active_unit = None
             if task.cancelled:
-                await message.reply("🚫 已取消。")
+                await message.reply(tr("🚫 已取消。"))
                 break
             if len(plan) > 1 and i < len(plan) - 1:
-                await task.wait_or_cancel(2, "多链接提取间隔")
+                await task.wait_or_cancel(2, tr("多链接提取间隔"))
     finally:
         if task.cancelled or task.timed_out:
             _recent_groups.get(message.from_user.id, {}).pop(

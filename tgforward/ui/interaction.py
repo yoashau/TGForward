@@ -234,9 +234,16 @@ def interaction(func):
                         await view.delete()
                     except Exception as exc:
                         logger.warning("输入清理失败 user=%s type=%s", uid, type(exc).__name__)
+        from tgforward.ui.i18n import language_context, user_language
+
+        language = await user_language(update.from_user)
+        active_panel = panels._panels.get(uid)
+        if active_panel and active_panel.ui_language in ("zh", "en"):
+            language = active_panel.ui_language
         token = _current.set(messages)
         try:
-            return await func(client, view)
+            with language_context(language):
+                return await func(client, view)
         finally:
             _current.reset(token)
             active = state.get(uid)

@@ -11,6 +11,7 @@ from pyrogram.errors import FloodWait
 from tgforward.runtime import lifecycle
 from tgforward.telegram.wait import acquire, heartbeat_sleep
 from tgforward.transfers.results import SideEffectRole
+from tgforward.ui.i18n import tr
 
 logger = logging.getLogger(__name__)
 
@@ -32,23 +33,23 @@ async def _wait(queue, task, status):
     await heartbeat_sleep(
         queue.blocked_until - time.monotonic(),
         task,
-        "等待 Telegram 下载限流解除",
+        tr("等待 Telegram 下载限流解除"),
         status=status,
-        notice=lambda remaining: (
-            f"⏳ Telegram 要求暂停下载，约 {math.ceil(remaining)} 秒后自动继续当前媒体。"
-            "\n无需重发链接，也可以点击下方按钮停止。"
+        notice=lambda remaining: tr(
+            "downloads.flood_wait",
+            math.ceil(remaining),
         ),
     )
 
 
 async def download_media(client, message, *, task=None, status=None, **kwargs):
     queue = queue_for(client)
-    async with acquire(queue.lock, task, "等待同账号下载队列"):
+    async with acquire(queue.lock, task, tr("等待同账号下载队列")):
         while True:
             await _wait(queue, task, status)
             if task:
                 task.check_cancel()
-                task.touch("下载媒体")
+                task.touch(tr("下载媒体"))
             try:
                 if task is not None:
                     lifecycle.authorize_side_effect(task, SideEffectRole.DOWNLOAD)

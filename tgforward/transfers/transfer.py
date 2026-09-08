@@ -39,6 +39,7 @@ from tgforward.transfers.results import (
     MessageResult,
     SideEffectRole,
 )
+from tgforward.ui.i18n import tr
 from tgforward.utils.files import apply_name_rules, media_filename, original_media_name
 from tgforward.utils.media import custom_thumb_path, get_video_metadata, screenshot
 from tgforward.utils.text import (
@@ -124,18 +125,18 @@ def _human_size(num_bytes: float) -> str:
 
 def _media_kind(message) -> str:
     for attr, kind in (
-        ("video", "视频"),
-        ("photo", "图片"),
-        ("audio", "音频"),
-        ("voice", "语音"),
-        ("video_note", "视频笔记"),
-        ("animation", "动图"),
-        ("sticker", "贴纸"),
-        ("document", "文件"),
+        ("video", tr("视频")),
+        ("photo", tr("图片")),
+        ("audio", tr("音频")),
+        ("voice", tr("语音")),
+        ("video_note", tr("视频笔记")),
+        ("animation", tr("动图")),
+        ("sticker", tr("贴纸")),
+        ("document", tr("文件")),
     ):
         if getattr(message, attr, None):
             return kind
-    return "媒体"
+    return tr("媒体")
 
 
 def _media_size(message) -> int:
@@ -206,10 +207,10 @@ async def _send(
 
     while True:
         # 只在锁内预订发送时隙；RPC 和 FloodWait 都在锁外执行。
-        async with acquire(_send_lock, task, "等待发送时隙"):
+        async with acquire(_send_lock, task, tr("等待发送时隙")):
             slot = max(time.monotonic(), _last_send_at + _MIN_SEND_INTERVAL)
             _last_send_at = slot
-        await heartbeat_sleep(slot - time.monotonic(), task, "等待发送时隙")
+        await heartbeat_sleep(slot - time.monotonic(), task, tr("等待发送时隙"))
         try:
             # 返回后先由业务层提交已送达状态，不在提交之前抛协作式取消。
             if task is not None:
@@ -232,7 +233,7 @@ async def _send(
                 if task:
                     task.check_cancel()
                 if not copying:
-                    raise TransferError("发送未返回成功结果，未计入已发送。")
+                    raise TransferError(tr("发送未返回成功结果，未计入已发送。"))
             if (
                 active is not None
                 and active.is_comment
@@ -242,18 +243,18 @@ async def _send(
                 task.comment_result.observe(active)
             if state is not None and any(part in state.uncertain for part in parts):
                 raise TransferError(
-                    ("公开复制" if copying else "")
-                    + "部分内容发送结果无法确认，重新提取可能造成重复。"
+                    (tr("公开复制") if copying else "")
+                    + tr("部分内容发送结果无法确认，重新提取可能造成重复。")
                 )
             return result
         except FloodWait as exc:
             logger.warning("发送限流 wait=%s; retry=server_rejected", exc.value)
-            await heartbeat_sleep(max(0, exc.value) + 1, task, "等待 Telegram 发送限流解除")
+            await heartbeat_sleep(max(0, exc.value) + 1, task, tr("等待 Telegram 发送限流解除"))
         except PeerIdInvalid:
             if copying:
                 raise
             raise TransferError(
-                "目标聊天不可达：请先向机器人发送 /start，或将机器人拉入目标群组。"
+                tr("目标聊天不可达：请先向机器人发送 /start，或将机器人拉入目标群组。")
             ) from None
 
 
@@ -367,7 +368,7 @@ async def transfer_message(
     else:
         result = MessageResult(str(source_key), "standalone")
     if result.delivery.uncertain:
-        raise TransferError("发送结果无法确认，重新提取可能造成重复发送。")
+        raise TransferError(tr("发送结果无法确认，重新提取可能造成重复发送。"))
     if result.delivery.confirmed_failed:
         result.delivery = MessageDeliveryState()
     result.is_comment = allow_copy_fallback
@@ -399,7 +400,7 @@ async def transfer_message(
             else False
         )
         if invalid_group:
-            result.fail_source("相册成员清单无效")
+            result.fail_source(tr("相册成员清单无效"))
             raise SourceResolutionError(result.source_error)
         if Task.is_media(message):
             result.resolve_source(
@@ -443,7 +444,7 @@ async def transfer_message(
         result.sent_message = description.sent_message
         result.last_message_id = description.last_message_id
         if result.outcome != "success":
-            raise TransferError("消息提取未完成；部分内容可能已经发送，重新提取可能重复。")
+            raise TransferError(tr("消息提取未完成；部分内容可能已经发送，重新提取可能重复。"))
         return result
     finally:
         result.delivery.settle()
@@ -644,14 +645,14 @@ async def _transfer_message(
                 )
             if i == 0:
                 first_sent = sent
-        result.summary = "完成。"
+        result.summary = tr("完成。")
         result.sent_message = first_sent
         return result
 
     # ── 媒体搬运受全局并发上限保护（纯文本不占带宽，不参与限流）──
     if task:
-        task.touch("等待传输名额")
-    async with acquire(_TRANSFER_SEMAPHORE, task, "等待传输名额"):
+        task.touch(tr("等待传输名额"))
+    async with acquire(_TRANSFER_SEMAPHORE, task, tr("等待传输名额")):
         # ── 相册 ──
         if getattr(message, "media_group_id", None):
             return await _transfer_album(
@@ -672,7 +673,7 @@ async def _transfer_message(
         final_cap, physical_cap = _build_caption(message, settings)
         if not source_private:
             if task:
-                task.touch("直接复制")
+                task.touch(tr("直接复制"))
             try:
                 copy_kwargs = {
                     "caption": "" if final_cap == "" else _media_caption(final_cap),
@@ -702,16 +703,21 @@ async def _transfer_message(
                     task.token if task else "-",
                     source_private,
                 )
-                return TransferDescription(f"完成：{_describe_media(message)}", sent_message=copied)
+                return TransferDescription(
+                    tr("完成：{0}", _describe_media(message)), sent_message=copied
+                )
             except (TransferError, TaskCancelled):
                 raise
             except Exception as e:
                 raise TransferError(
-                    f"公开来源直接复制失败（{type(e).__name__}）。请检查机器人是否能访问来源及发送目标；公开来源不下载。"
+                    tr(
+                        "公开来源直接复制失败（{0}）。请检查机器人是否能访问来源及发送目标；公开来源不下载。",
+                        type(e).__name__,
+                    )
                 ) from e
 
         if task:
-            task.touch("下载")
+            task.touch(tr("下载"))
         outcome = await _transfer_physical(
             uploader,
             downloader,
@@ -739,11 +745,11 @@ async def _fetch_media_group(downloader, message) -> list:
     try:
         group_id = getattr(message, "media_group_id", None)
         if group_id is None:
-            raise ValueError("源消息没有相册标识")
+            raise ValueError(tr("源消息没有相册标识"))
         ids = list(range(max(1, message.id - 9), message.id + 10))
         msgs = await downloader.get_messages(message.chat.id, ids)
         if not isinstance(msgs, (list, tuple)):
-            raise ValueError("读取相册未返回消息列表")
+            raise ValueError(tr("读取相册未返回消息列表"))
         group = [
             x
             for x in msgs
@@ -753,17 +759,17 @@ async def _fetch_media_group(downloader, message) -> list:
         ]
         member_ids = [x.id for x in group]
         if not group or message.id not in member_ids:
-            raise ValueError("相册清单缺少原始消息")
+            raise ValueError(tr("相册清单缺少原始消息"))
         if len(set(member_ids)) != len(member_ids) or len(group) > 10:
-            raise ValueError("相册清单包含重复成员或超出成员上限")
+            raise ValueError(tr("相册清单包含重复成员或超出成员上限"))
         if any(x.chat.id != message.chat.id or x.id not in ids for x in group):
-            raise ValueError("相册成员不属于本次源读取范围")
+            raise ValueError(tr("相册成员不属于本次源读取范围"))
         return sorted(group, key=lambda x: x.id)
     except TaskCancelled:
         raise
     except Exception as exc:
         logger.warning("读取完整相册失败 type=%s", type(exc).__name__)
-        raise SourceResolutionError(f"无法读取完整相册：{exc}") from exc
+        raise SourceResolutionError(tr("无法读取完整相册：{0}", exc)) from exc
 
 
 async def _transfer_album(
@@ -783,7 +789,7 @@ async def _transfer_album(
         media_group if media_group is not None else await _fetch_media_group(downloader, message)
     )
     finals, originals = _album_captions(group, settings)
-    summary = f"完成：相册（{len(group)} 项）"
+    summary = tr("完成：相册（{0} 项）", len(group))
 
     sent_message = delivery.remember_message()
 
@@ -797,7 +803,7 @@ async def _transfer_album(
 
     if not source_private:
         if task:
-            task.touch("直接复制相册")
+            task.touch(tr("直接复制相册"))
         try:
             if len(pending) == len(group):
                 kwargs = {"captions": finals} if any(f is not None for f in finals) else {}
@@ -816,7 +822,7 @@ async def _transfer_album(
                     batch=True,
                 )
                 if not copied:
-                    raise TransferError("公开相册复制未返回成功结果。")
+                    raise TransferError(tr("公开相册复制未返回成功结果。"))
                 sent_message = copied[0]
                 _commit_sent(task, group)
             else:
@@ -842,7 +848,7 @@ async def _transfer_album(
                             parts=[f"media:{member.id}"],
                         )
                         if copied is None:
-                            raise TransferError("公开媒体复制未返回成功结果。")
+                            raise TransferError(tr("公开媒体复制未返回成功结果。"))
                         sent_message = sent_message or copied
                         _commit_sent(task, [member])
                     except TaskCancelled:
@@ -856,7 +862,7 @@ async def _transfer_album(
             if len(pending) == len(group):
                 _mark_failed(task, group)
             raise TransferError(
-                f"公开相册直接复制失败（{type(exc).__name__}）；公开来源不下载。"
+                tr("公开相册直接复制失败（{0}）；公开来源不下载。", type(exc).__name__)
             ) from exc
         delivery.remember_message(sent_message)
         return TransferDescription(summary, last_message_id=group[-1].id, sent_message=sent_message)
@@ -867,7 +873,7 @@ async def _transfer_album(
     ):
         _mark_failed(task, [m for _, m in pending])
         raise TransferError(
-            "相册中包含超过 2GB 的文件：需要配置 Premium 会话（STRING + LOG_GROUP）才能上传。"
+            tr("相册中包含超过 2GB 的文件：需要配置 Premium 会话（STRING + LOG_GROUP）才能上传。")
         )
 
     # 保留原始成员顺序：连续普通媒体构成 segment，超大成员单独发送。
@@ -929,7 +935,7 @@ async def _transfer_album(
 
     delivery.remember_message(sent_message)
     return TransferDescription(
-        summary + ("，含大文件" if oversize else ""),
+        summary + (tr("，含大文件") if oversize else ""),
         last_message_id=group[-1].id,
         sent_message=sent_message,
     )
@@ -965,12 +971,12 @@ async def _send_album_physical(
         )
         return
     if not 2 <= len(group) <= 10:
-        raise TransferError("相册成员数量应为 2–10 项。")
+        raise TransferError(tr("相册成员数量应为 2–10 项。"))
     if status is None:
         if task is not None:
             lifecycle.authorize_side_effect(task, SideEffectRole.DOWNLOAD)
         status = await uploader.send_message(
-            int(user_chat_id), f"⬇️ 正在下载相册（共 {len(group)} 项）..."
+            int(user_chat_id), tr("⬇️ 正在下载相册（共 {0} 项）...", len(group))
         )
         owned = True
     else:
@@ -997,14 +1003,14 @@ async def _send_album_physical(
                     status.chat.id,
                     status.id,
                     task,
-                    label="⬇️ 下载中",
+                    label=tr("⬇️ 下载中"),
                     status_message=status,
                 ),
             )
             if task is not None:
                 task.check_cancel()
             if not path:
-                raise TransferError(f"相册第 {idx + 1} 项下载失败，已停止，未发送残缺相册。")
+                raise TransferError(tr("相册第 {0} 项下载失败，已停止，未发送残缺相册。", idx + 1))
             files.append(path)
             if task:
                 task.media_downloaded.add(task.media_key(gm))
@@ -1037,11 +1043,11 @@ async def _send_album_physical(
                 )
 
         if not media_inputs:
-            raise TransferError("相册所有项目均下载失败。")
+            raise TransferError(tr("相册所有项目均下载失败。"))
 
         if task:
-            task.touch("上传相册")
-        await _edit(status, f"⬆️ 正在上传相册（共 {len(media_inputs)} 项）...")
+            task.touch(tr("上传相册"))
+        await _edit(status, tr("⬆️ 正在上传相册（共 {0} 项）...", len(media_inputs)))
         sent = await _send(
             partial(
                 uploader.send_media_group,
@@ -1053,7 +1059,7 @@ async def _send_album_physical(
                     status.chat.id,
                     status.id,
                     task,
-                    label="⬆️ 上传相册",
+                    label=tr("⬆️ 上传相册"),
                     status_message=status,
                     role=SideEffectRole.FINAL_DELIVERY,
                 ),
@@ -1099,7 +1105,7 @@ async def _transfer_physical(
     if status is None:
         if task is not None:
             lifecycle.authorize_side_effect(task, SideEffectRole.DOWNLOAD)
-        status = await uploader.send_message(int(user_chat_id), "⬇️ 正在下载...")
+        status = await uploader.send_message(int(user_chat_id), tr("⬇️ 正在下载..."))
         owned = True
     else:
         owned = False
@@ -1121,18 +1127,23 @@ async def _transfer_physical(
             status=status,
             file_name=media_filename(message),
             progress=make_progress(
-                uploader, status.chat.id, status.id, task, label="⬇️ 下载中", status_message=status
+                uploader,
+                status.chat.id,
+                status.id,
+                task,
+                label=tr("⬇️ 下载中"),
+                status_message=status,
             ),
         )
         if task is not None:
             task.check_cancel()
         if not file_path:
-            raise TransferError("下载失败，消息可能不含可下载的媒体内容。")
+            raise TransferError(tr("下载失败，消息可能不含可下载的媒体内容。"))
 
         if task:
             task.media_downloaded.add(task.media_key(message))
         if _has_original_name(message):
-            await _edit(status, "✏️ 正在重命名...")
+            await _edit(status, tr("✏️ 正在重命名..."))
             file_path = apply_name_rules(
                 file_path,
                 delete_words=settings.delete_words,
@@ -1147,7 +1158,7 @@ async def _transfer_physical(
         metadata = await get_video_metadata(file_path) if is_video else None
         thumb = custom_thumb_path(settings.user_id)
         if is_video and thumb is None:
-            await _edit(status, "🎬 正在生成封面...")
+            await _edit(status, tr("🎬 正在生成封面..."))
             thumb = await screenshot(file_path, (metadata or {}).get("duration"))
 
         size_text = _human_size(os.path.getsize(file_path))
@@ -1168,12 +1179,12 @@ async def _transfer_physical(
             )
             _commit_sent(task, [message])
             return TransferDescription(
-                f"完成（Premium 通道）：{name_text}（{size_text}）", sent_message=sent
+                tr("完成（Premium 通道）：{0}（{1}）", name_text, size_text), sent_message=sent
             )
 
         if task:
-            task.touch("上传")
-        await _edit(status, "⬆️ 正在上传...")
+            task.touch(tr("上传"))
+        await _edit(status, tr("⬆️ 正在上传..."))
         sent = await _upload_regular(
             uploader,
             message,
@@ -1188,7 +1199,9 @@ async def _transfer_physical(
         )
         _commit_sent(task, [message])
         kind = _media_kind(message)
-        return TransferDescription(f"完成：{kind} {name_text}（{size_text}）", sent_message=sent)
+        return TransferDescription(
+            tr("完成：{0} {1}（{2}）", kind, name_text, size_text), sent_message=sent
+        )
 
     except TaskCancelled:
         raise
@@ -1220,14 +1233,14 @@ async def _upload_large(
     premium = clients_registry.premium
     if premium is None or not clients_registry.premium_started or not LOG_GROUP:
         raise TransferError(
-            "文件超过 2GB：需要在服务端配置 Premium 会话（STRING + LOG_GROUP）才能上传。"
+            tr("文件超过 2GB：需要在服务端配置 Premium 会话（STRING + LOG_GROUP）才能上传。")
         )
     progress = make_progress(
         uploader,
         status.chat.id,
         status.id,
         task,
-        label="⬆️ 上传中",
+        label=tr("⬆️ 上传中"),
         status_message=status,
         role=SideEffectRole.STAGING_UPLOAD,
     )
@@ -1309,7 +1322,7 @@ async def _upload_regular(
         status.chat.id,
         status.id,
         task,
-        label="⬆️ 上传中",
+        label=tr("⬆️ 上传中"),
         status_message=status,
         role=SideEffectRole.FINAL_DELIVERY,
     )

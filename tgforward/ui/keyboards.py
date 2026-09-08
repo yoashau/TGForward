@@ -4,6 +4,8 @@ from dataclasses import dataclass
 
 from pyrogram.types import InlineKeyboardButton
 
+from tgforward.ui.i18n import tr
+
 
 @dataclass(frozen=True)
 class CommentAction:
@@ -15,7 +17,7 @@ class CommentAction:
 
 def comment_button(action: CommentAction, owner_id: int) -> InlineKeyboardButton:
     count = action.comment_count
-    label = f"💬 提取评论（{count} 条）" if count else "💬 提取评论"
+    label = tr("💬 提取评论（{0} 条）", count) if count else tr("💬 提取评论")
     return InlineKeyboardButton(
         label, callback_data=f"cmt:{action.chat_ref}:{action.post_id}:{owner_id}"
     )

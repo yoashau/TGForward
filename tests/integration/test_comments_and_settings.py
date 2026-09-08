@@ -57,7 +57,7 @@ def test_menu_has_only_key_first_level_actions():
 
     text, markup = page("home", 99999)
     actions = [b.callback_data for row in markup.inline_keyboard for b in row]
-    assert actions == ["nav:settings", "nav:account", "nav:close"]
+    assert actions == ["nav:settings", "nav:account", "nav:language", "nav:close"]
     assert len(BOT_COMMANDS) == 3
     assert "欢迎使用" in text
 

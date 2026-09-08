@@ -9,6 +9,7 @@ import pytest
 from tgforward.handlers import admin, auth, common, menu, relay, settings, start
 from tgforward.ui import interaction as ui
 from tgforward.ui import panel, state
+from tgforward.ui.i18n import normalize_language
 
 
 def msg(mid=1, text="", uid=1):
@@ -224,3 +225,53 @@ def test_explicit_navigation_none_and_preserve():
         assert message.edit.call_args.kwargs["reply_markup"] is markup
 
     asyncio.run(check())
+
+
+@pytest.mark.parametrize(
+    "code,expected",
+    [(None, "zh"), ("zh-hans", "zh"), ("zh-hant", "zh"), ("en", "en"), ("de", "en")],
+)
+def test_home_language_uses_telegram_locale(code, expected):
+    assert normalize_language(code) == expected
+
+
+def test_english_home_preserves_navigation_and_admin_visibility(monkeypatch):
+    monkeypatch.setattr(menu, "OWNER_ID", [1])
+    for uid in (1, 2):
+        text, markup = menu.page("home", uid, language="en")
+        labels = {b.callback_data: b.text for row in markup.inline_keyboard for b in row}
+        assert "Welcome to TGForward" in text
+        assert "https://t.me/channel/100 10" in text
+        assert labels["nav:settings"] == "⚙️ Extraction settings"
+        assert labels["nav:close"] == "✖️ Close menu"
+        assert labels["nav:language"] == "🌐 Language"
+        assert ("nav:admin" in labels) == (uid == 1)
+
+
+def test_home_language_switch_survives_submenu_navigation(monkeypatch):
+    from tgforward.storage import users
+
+    monkeypatch.setattr(users, "set_ui_language", AsyncMock(return_value=True))
+    monkeypatch.setattr(start, "configure_user_commands", AsyncMock())
+    m = msg()
+
+    async def check():
+        await menu.navigate(None, query(m, "nav:home:en"))
+        assert "Welcome to TGForward" in m.edit.call_args.args[0]
+        await menu.navigate(None, query(m, "nav:account"))
+        await menu.navigate(None, query(m, "nav:home"))
+        assert "Welcome to TGForward" in m.edit.call_args.args[0]
+        await menu.navigate(None, query(m, "nav:home:zh"))
+        assert "欢迎使用" in m.edit.call_args.args[0]
+        assert "nav:language" in buttons(m)
+
+    asyncio.run(check())
+
+
+def test_english_home_still_requires_access(monkeypatch):
+    monkeypatch.setattr(menu, "is_whitelisted", AsyncMock(return_value=False))
+    m = msg()
+    q = query(m, "nav:home:en")
+    asyncio.run(menu.navigate(None, q))
+    m.edit.assert_not_awaited()
+    assert q.answer.call_args.kwargs["show_alert"] is True

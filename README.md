@@ -19,9 +19,9 @@ A Telegram message extraction bot. Send a message link to copy text, photos, vid
 ### Getting started
 
 1. Send `/start` to open the main menu.
-2. Sign in under “账号与记录” (Account & history). Public sources usually do not require a personal account.
+2. Sign in under **Account & history**. Public sources usually do not require a personal account.
 3. Send a message link. To stop, use the stop button in the progress message or send `/cancel`.
-4. Use “提取设置” (Extraction settings) to configure captions, file rules, and destinations.
+4. Use **Extraction settings** to configure captions, file rules, and destinations.
 
 | Command | Purpose |
 | --- | --- |
@@ -36,6 +36,10 @@ A Telegram message extraction bot. Send a message link to copy text, photos, vid
 | `/status`, `/broadcast` | View service status or send a broadcast (administrators) |
 
 Private sources and discussion threads require a signed-in account with access. Public media is copied directly; private media is downloaded and uploaded. Filename and thumbnail settings apply to downloaded-and-uploaded files. Use a chat ID as the destination, or `chat_id/topic_id` for a topic.
+
+### Interface language
+
+Open **Language** in the main menu to choose English or Simplified Chinese. The choice is saved to your account and applies to menus, forms, confirmations, errors, and extraction/comment progress and results. Without a saved preference, Chinese Telegram locales use Chinese, other locales use English; an unavailable locale defaults to Chinese. Running tasks keep the language they started with. Original messages, captions, filenames, custom text, and third-party error details are not translated.
 
 ### Results and cancellation
 

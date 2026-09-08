@@ -1,0 +1,16 @@
+{
+  "comments.thread_unavailable": "Telegram 未确认可读取的评论串，已检查同相册候选入口；帖子可能未开放评论或讨论根已删除。",
+  "auth.phone_invalid": "❌ 手机号格式不正确，请以 `+` 开头，例如 `+8613812345678`。当前仍在登录流程，链接不会被提取。",
+  "auth.code_prompt": "📩 **输入验证码**\n\n请输入你收到的验证码，**数字之间用空格隔开**。\n示例：`1 2 3 4 5`",
+  "auth.revocation_pending": "⚠️ 本地已退出，但远端 Session 撤销失败。已加密保存待撤销记录，可再次 /logout 重试，或在 Telegram「设置 → 设备」中结束该会话。",
+  "menu.language": "🌐 **语言设置**\n\n选择界面语言。菜单、输入提示和任务消息使用所选语言，原消息内容保持不变。",
+  "auth.helper_prompt": "🤖 **绑定辅助机器人**\n\n请发送 @BotFather 提供的 Bot Token。\n验证通过后才会替换原绑定。",
+  "tasks.busy": "⏳ 已有任务正在「{0}」阶段处理。当前请求未加入，请完成后重新提取，或 /cancel 停止。",
+  "settings.comments_help": "\n\n开启：正文发送后，自动提取评论文字和媒体。\n关闭：在提取完成后的任务管理消息中点击「💬 提取评论」手动提取。\n\n🔐 需要登录能查看该评论区的账号。",
+  "settings.destination_invalid": "❌ 格式不正确。应为 `-100频道ID` 或 `-100群组ID/话题ID`，可重新发送或 /cancel 取消。",
+  "tasks.media_progress": "📦 {0}：媒体 {1} 个，已发送 {2} 个，失败 {3} 个\n⬇️ 需下载 {4} 个，已下载 {5} 个，待下载 {6} 个",
+  "downloads.flood_wait": "⏳ Telegram 要求暂停下载，约 {0} 秒后自动继续当前媒体。\n无需重发链接，也可以点击下方按钮停止。",
+  "menu.welcome_to_tgforward_extract_messages": "🤖 **欢迎使用 TGForward**\n\n📩 **提取消息**\n发送 Telegram 消息链接，或直接转发频道消息。\n\n📚 **批量提取**\n链接后加空格和数量，例如：\n`https://t.me/channel/100 10`\n\n🔐 **私有来源**\n先在「账号与记录」登录能访问该频道或群组的账号。\n\n💬 **评论提取**\n未开启「同时提取评论」时，可在提取完成后的任务管理消息中点击「💬 提取评论」手动提取。\n开启后，原帖内容发送完成即自动提取评论。",
+  "menu.helper_bot_send_the_token": "🤖 **辅助机器人**\n\n绑定时按提示发送 BotFather 提供的 Token。\n私聊请先向辅助机器人发送 /start；群组或频道请添加它并授予发送权限。\n辅助机器人需能向发送目标发消息；绑定本身不会提高单文件上传上限。",
+  "settings.files_captions_add_filename_tags": "✏️ **文件与文案**\n\n🏷️ 为文件添加标签、更换封面。\n💬 追加文案，或设置替换、删词规则。\n\n📌 文件名和封面设置仅作用于下载后上传的文件；公开来源保留原文件名和封面。"
+}

@@ -442,3 +442,23 @@ async def list_whitelisted_page(offset, limit, *, exclude_owners=False):
 
 async def storage_healthy():
     return await storage.healthcheck()
+
+
+async def set_ui_language(user_id, language):
+    """Persist an interface preference without recreating deleted users."""
+    if language not in ("zh", "en"):
+        raise ValueError("unsupported interface language")
+    async with lifecycle.user_lock(user_id):
+        if user_id in lifecycle.revoked:
+            return False
+        try:
+
+            def update(doc):
+                doc["ui_language"] = language
+                doc["updated_at"] = datetime.now()
+                return True
+
+            return bool(await storage.mutate_user(user_id, update, create=user_id in OWNER_ID))
+        except Exception:
+            logger.exception("Interface language could not be saved user=%s", user_id)
+            return False
