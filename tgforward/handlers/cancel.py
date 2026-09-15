@@ -12,11 +12,15 @@ from tgforward.ui.interaction import interaction
 
 async def _cancel(uid):
     cleared = []
+    task = tasks.get(uid)
     stopped = tasks.request_cancel(uid)
     if await dialogue.clear(uid):
         cleared.append(tr("填写操作"))
     if stopped:
-        cleared.append(tr("提取任务"))
+        if task.status is not None:
+            await task.status.refresh_controls()
+        if not cleared:
+            return None  # 后台任务负责在管理消息中显示取消结果。
     return tr("✅ 已取消：{0}。", "、".join(cleared)) if cleared else tr("ℹ️ 当前没有进行中的操作。")
 
 
@@ -29,7 +33,9 @@ async def cancel_command(client, message):
             task.status = TaskStatus.wrap(await message.reply(tr(task.stage)), task)
         await task.status.refresh_controls()
         return
-    await message.reply(await _cancel(message.from_user.id))
+    text = await _cancel(message.from_user.id)
+    if text is not None:
+        await message.reply(text)
 
 
 @bot.on_callback_query(filters.regex(r"^flow:result:"))
@@ -76,9 +82,9 @@ async def cancel_callback(client, query):
             return
         tasks.request_cancel(uid)
         await query.answer(tr("正在取消…"))
-        if task is not None and task.kind == "comments":
-            return  # 评论管理消息自行显示终态，不另发临时反馈。
-        text = tr("✅ 已请求停止提取任务。")
+        if task.status is not None:
+            await task.status.refresh_controls()
+        return
     await query.message.reply(text)
 
 

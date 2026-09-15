@@ -94,6 +94,7 @@ def test_download_cancels_once_and_old_button_cannot_stop_new_task():
         button = query(old)
         await cancel.cancel_callback.__wrapped__(None, button)
         assert old.cancelled
+        button.message.reply.assert_not_awaited()
         tasks.finish(1, old)
         fresh = active()
         await cancel.cancel_callback.__wrapped__(None, button)
@@ -117,6 +118,7 @@ def test_cancel_command_requires_upload_confirmation():
             )
         await cancel.cancel_command.__wrapped__(None, command)
         assert task.cancelled
+        command.reply.assert_not_awaited()
 
     asyncio.run(run())
 

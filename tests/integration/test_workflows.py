@@ -616,3 +616,115 @@ def test_cancelled_runner_must_finish_cleanup_before_lifecycle_change(handler):
         await ui.shutdown()
 
     asyncio.run(check())
+
+
+@pytest.mark.parametrize("reason", [tasks.CancelReason.USER, tasks.CancelReason.TIMEOUT])
+def test_cancelled_link_only_updates_its_management_message(monkeypatch, reason):
+    from tgforward.transfers import extractor
+
+    async def check():
+        request = message("https://t.me/channel/1")
+
+        async def stop(uid):
+            tasks.get(uid).set_cancel_reason(reason)
+            if reason == tasks.CancelReason.USER:
+                raise tasks.TaskCancelled()
+            raise asyncio.CancelledError()
+
+        monkeypatch.setattr(extractor.clients, "get_user_client", stop)
+        await router.smart_router(None, request)
+        task = tasks.get(1)
+        await task.runner
+        request.reply.assert_awaited_once()
+        status = task.units[0].status
+        assert status.terminal_rendered and task.cancelled
+        text = request.reply.return_value.edit.call_args.args[0]
+        assert "已取消" in text or "已停止" in text
+        await ui.shutdown()
+
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize("count", [1, 3])
+def test_queued_links_reuse_notices_for_progress_and_results(monkeypatch, count):
+    from tgforward.storage.users import UserSettings
+    from tgforward.transfers import extractor
+
+    monkeypatch.setattr(tasks, "USER_COOLDOWN", 0)
+    monkeypatch.setattr(extractor, "BATCH_DELAY", 0)
+    monkeypatch.setattr(extractor.clients, "get_user_client", AsyncMock(return_value=NS()))
+    monkeypatch.setattr(extractor.clients, "get_upload_bot", AsyncMock(return_value=NS()))
+    monkeypatch.setattr(extractor, "load_user_settings", AsyncMock(return_value=UserSettings(1)))
+    monkeypatch.setattr(extractor, "fetch_message", AsyncMock(return_value=None))
+
+    async def check():
+        original = tasks.register(1, "comments", 1)
+        requests = [message(f"https://t.me/channel/{mid} {count}") for mid in (10, 20)]
+        for index, request in enumerate(requests):
+            request.reply.return_value.id = 90 + index
+            await router.smart_router(None, request)
+        tasks.finish(1, original)
+        first = tasks.get(1)
+        await first.runner
+        while active := tasks.get(1):
+            await active.runner
+        for index, request in enumerate(requests):
+            request.reply.assert_awaited_once()
+            notice = request.reply.return_value
+            assert (
+                "正在提取" in notice.edit.call_args_list[0].args[0]
+                or "开始批量提取" in notice.edit.call_args_list[0].args[0]
+            )
+            assert f"等待队列：{1 - index} 个请求" in notice.edit.call_args.args[0]
+            assert not any(
+                "排队请求开始执行" in call.args[0] for call in notice.edit.call_args_list
+            )
+        assert first.units[0].status.message._message is requests[0].reply.return_value
+        await ui.shutdown()
+
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize("cancel_early", [False, True])
+def test_queue_advancing_before_notice_returns_does_not_create_an_extra_message(
+    monkeypatch, cancel_early
+):
+    from tgforward.transfers import extractor
+
+    monkeypatch.setattr(tasks, "USER_COOLDOWN", 0)
+    monkeypatch.setattr(extractor.clients, "get_user_client", AsyncMock(return_value=NS()))
+    monkeypatch.setattr(extractor.clients, "get_upload_bot", AsyncMock(return_value=NS()))
+    fetch = AsyncMock(return_value=None)
+    monkeypatch.setattr(extractor, "fetch_message", fetch)
+
+    async def check():
+        original = tasks.register(1, "comments", 1)
+        request = message("https://t.me/channel/1")
+        notice = request.reply.return_value
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def reply(*args, **kwargs):
+            entered.set()
+            await release.wait()
+            return notice
+
+        request.reply.side_effect = reply
+        routing = asyncio.create_task(router.smart_router(None, request))
+        await entered.wait()
+        tasks.finish(1, original)
+        task = tasks.get(1)
+        if cancel_early:
+            tasks.request_cancel(1)
+        await asyncio.sleep(0)
+        fetch.assert_not_awaited()
+        release.set()
+        await routing
+        await asyncio.wait_for(task.runner, 1)
+        request.reply.assert_awaited_once()
+        assert notice.edit.await_count >= 1
+        if cancel_early:
+            fetch.assert_not_awaited()
+            assert "已停止" in notice.edit.call_args.args[0]
+        await ui.shutdown()
+
+    asyncio.run(check())

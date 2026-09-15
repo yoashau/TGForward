@@ -230,12 +230,12 @@ async def smart_router(client, message):
                 ]
             ),
         )
-        if not tasks.is_queued(uid, request.token):
+        if request.cancelled:
             await request.notice.edit(
-                tr("✅ 已移出队列。") if request.cancelled else tr("▶️ 排队请求开始执行。"),
+                tr("✅ 已移出队列。"),
                 reply_markup=None,
             )
-            if request.cancelled and request.messages is not None:
+            if request.messages is not None:
                 request.messages.later()
 
 
@@ -243,7 +243,7 @@ async def _run_plan(message, plan, task):
     try:
         for i, (ref, count, url) in enumerate(plan):
             task.check_cancel()
-            task.active_unit = task.extraction_unit((i, url), count)
+            unit = task.active_unit = task.extraction_unit((i, url), count)
             try:
                 if count > 1:
                     await extract_range(message, ref, count, task=task)
@@ -254,13 +254,15 @@ async def _run_plan(message, plan, task):
             except Exception as e:
                 logger.exception("处理链接出错 %s: %s", url, e)
                 diagnostics.record_error("router", str(e))
-                await message.reply(
-                    tr("⚠️ 处理链接时出错：`{0}`\n错误信息：{1}", url[:80], str(e)[:100])
-                )
+                status = unit.status
+                text = tr("⚠️ 处理链接时出错：`{0}`\n错误信息：{1}", url[:80], str(e)[:100])
+                if status is None:
+                    await message.reply(text)
+                else:
+                    await status.finish(text, "failed")
 
             task.active_unit = None
             if task.cancelled:
-                await message.reply(tr("🚫 已取消。"))
                 break
             if len(plan) > 1 and i < len(plan) - 1:
                 await task.wait_or_cancel(2, tr("多链接提取间隔"))

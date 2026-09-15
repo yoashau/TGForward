@@ -68,6 +68,7 @@ class Task:
     stage: str = "获取消息"
     timed_out: bool = False
     status: object | None = field(default=None, repr=False)
+    queued_message: object | None = field(default=None, repr=False)
     uploading: bool = False
     upload_interrupted: bool = False
     cancel_confirmation: str | None = None
@@ -174,6 +175,7 @@ class Task:
             text += tr("\n⚠️ {0} 个媒体发送结果无法确认。", len(unknown))
         if self.media_scanning:
             text += tr("\n正在读取清单，数量可能增加。")
+        text += tr("\n📋 等待队列：{0} 个请求", queued_count(self.user_id))
         return text
 
     def reset_media(self, scope):
@@ -347,15 +349,25 @@ def _start_request(request):
     _tasks[uid] = task
 
     async def work():
+        # 路由持锁发送排队提示；等提示就绪后交给首个链接作为进度消息。
+        async with lifecycle.user_lock(uid):
+            task.queued_message, request.notice = request.notice, None
         await task.wait_or_cancel(delay, tr("等待任务间隔"))
-        if request.notice is not None:
-            with suppress(Exception):
-                await asyncio.wait_for(
-                    request.notice.edit(tr("▶️ 排队请求开始执行。"), reply_markup=None), timeout=5
-                )
         await request.work(task)
 
-    request.context.run(launch, task, work, request.notify)
+    async def notify(text):
+        async with lifecycle.user_lock(uid):
+            message = request.notice or task.queued_message
+            if message is not None:
+                from tgforward.transfers.progress import stop_keyboard
+
+                await message.edit(
+                    text, reply_markup=None if task.cancelled else stop_keyboard(task)
+                )
+                return
+        await request.notify(text)
+
+    request.context.run(launch, task, work, notify)
 
 
 def _release_requests(requests):
@@ -489,14 +501,24 @@ def launch(task: Task, work, notify) -> None:
     async def terminal(text):
         if task.cancel_reason == CancelReason.REVOKED:
             return
-        if task.status is not None:
+        status = task.status or (task.units[-1].status if task.units else None)
+        if status is None and task.queued_message is not None:
+            from tgforward.transfers.progress import TaskStatus
+
+            status = task.status = TaskStatus.wrap(task.queued_message, task)
+            task.queued_message = None
+        if status is not None:
+            if status.terminal_rendered:
+                return
             with suppress(Exception):
                 await asyncio.wait_for(
-                    task.status.finish(
+                    status.finish(
                         text, "stopped" if task.cancelled or task.timed_out else "failed"
                     ),
                     timeout=5,
                 )
+            if status.terminal_rendered:
+                return
         await say(text)
 
     async def watch():
@@ -510,13 +532,12 @@ def launch(task: Task, work, notify) -> None:
             if idle >= min(60, TASK_STALL_TIMEOUT / 2) and not warned:
                 warned = True
                 kind = tr("评论提取") if task.kind == "comments" else tr("消息提取")
-                await say(
-                    tr(
-                        "⏳ {0}在「{1}」阶段暂时没有新进度。",
-                        kind,
-                        tr(task.stage),
-                    )
-                )
+                text = tr("⏳ {0}在「{1}」阶段暂时没有新进度。", kind, tr(task.stage))
+                if task.status is not None:
+                    with suppress(Exception):
+                        await asyncio.wait_for(task.status.edit(text), timeout=5)
+                else:
+                    await say(text)
             if idle < 30:
                 warned = False
 

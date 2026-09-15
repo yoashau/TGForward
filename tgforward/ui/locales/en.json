@@ -200,7 +200,6 @@
   "✅ 已取消：{0}。": "✅ Cancelled: {0}.",
   "ℹ️ 当前没有进行中的操作。": "ℹ️ No operation is running.",
   "✅ 已退出当前填写。": "✅ Input cancelled.",
-  "✅ 已请求停止提取任务。": "✅ Requested extraction stop.",
   "填写操作": "input",
   "提取任务": "extraction task",
   "正在取消…": "Cancelling…",
@@ -388,11 +387,11 @@
   "tasks.queue_cleared": "✅ Removed {0} waiting requests. The current task continues.",
   "tasks.confirm_upload_cancel": "⚠️ Stop uploading?\n\nExtracting again after stopping requires downloading and uploading again; delivered content will remain.\nUploading continues. If you do not confirm within {0} seconds, the progress display will return automatically.",
   "等待任务间隔": "Waiting between requests",
-  "▶️ 排队请求开始执行。": "▶️ The queued request is starting.",
   "移出队列": "Remove from queue",
   "清空等待队列": "Clear waiting queue",
   "⚠️ 确认停止上传": "⚠️ Confirm stop upload",
   "▶️ 继续上传": "▶️ Continue uploading",
   "该请求已开始或已移出队列。": "This request has started or was removed from the queue.",
-  "✅ 已移出队列。": "✅ Removed from the queue."
+  "✅ 已移出队列。": "✅ Removed from the queue.",
+  "\n📋 等待队列：{0} 个请求": "\n📋 Waiting queue: {0} requests"
 }

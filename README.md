@@ -52,6 +52,8 @@ A user stop (`USER`) prevents new sends and interrupts downloads or uploads at t
 
 Each input message is one queued request and may contain multiple links or a batch range. Requests start automatically in order. Stopping, failure, or timeout ends the current request and continues with the next. Queue notices let you remove a request or clear all waiting requests; clearing leaves the current task running. Waiting requests do not consume transfer concurrency. The queue is held in memory and cleared on service restart or account access revocation.
 
+When a queued request starts, its notice becomes the first link's progress and result message. The progress footer shows the number of waiting requests, including zero. Cancellation and timeout results update the corresponding task message without an additional notification when the result is already displayed.
+
 Partial album recovery records are kept for one hour. Account identity, user lifecycle, source version, destination, and actual payload distinguish recovery records; only confirmed members are reused. These records are an in-process recovery cache, not a persistent delivery journal. Missing local records after a crash do not establish the remote outcome, and exactly-once delivery across restarts is not guaranteed.
 
 ## Deployment

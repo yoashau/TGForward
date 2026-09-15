@@ -222,6 +222,23 @@ async def _resolve_comment_link(ref, user_client):
 # ─── 单条提取 ────────────────────────────────────────────────────────────────
 
 
+async def _status_message(message, task, text):
+    queued, task.queued_message = task.queued_message, None
+    markup = cancel_keyboard(task.user_id)
+    if queued is not None:
+        from pyrogram.errors import MessageNotModified
+
+        try:
+            await queued.edit(text, reply_markup=markup)
+            return queued
+        except MessageNotModified:
+            return queued
+        except Exception:
+            # 排队消息已被删除或不可编辑时，仍需为请求提供可用的进度入口。
+            task.check_cancel()
+    return await message.reply(text, reply_markup=markup)
+
+
 async def extract_single(message, ref, task: Task | None = None) -> None:
     uid = message.from_user.id
     own_task = task is None
@@ -236,7 +253,7 @@ async def extract_single(message, ref, task: Task | None = None) -> None:
             return
 
     try:
-        status = await message.reply(tr("⏳ 正在提取..."), reply_markup=cancel_keyboard(uid))
+        status = await _status_message(message, task, tr("⏳ 正在提取..."))
     except BaseException:
         if own_task:
             tasks.finish(uid, task)
@@ -347,9 +364,7 @@ async def extract_range(message, ref, count: int, task: Task | None = None) -> N
             return
 
     try:
-        status = await message.reply(
-            tr("⏳ 开始批量提取（共 {0} 条）...", count), reply_markup=cancel_keyboard(uid)
-        )
+        status = await _status_message(message, task, tr("⏳ 开始批量提取（共 {0} 条）...", count))
     except BaseException:
         if own_task:
             tasks.finish(uid, task)
