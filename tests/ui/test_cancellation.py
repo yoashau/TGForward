@@ -8,6 +8,7 @@ from tgforward.handlers import cancel
 from tgforward.runtime import tasks
 from tgforward.transfers.progress import TaskStatus, stop_keyboard
 from tgforward.ui import state
+from tgforward.ui.i18n import tr
 
 
 @pytest.fixture(autouse=True)
@@ -43,10 +44,13 @@ def test_upload_confirmation_survives_progress_and_repeated_first_click():
             first = query(task)
             await cancel.cancel_callback.__wrapped__(None, first)
             assert not task.cancelled
-            markup = task.status.message.edit_reply_markup.call_args.kwargs["reply_markup"]
+            first.answer.assert_awaited_once_with()
+            assert "确认停止上传" in task.status.message.edit.call_args.args[0]
+            markup = task.status.message.edit.call_args.kwargs["reply_markup"]
             confirm = markup.inline_keyboard[0][0].callback_data
             await task.status.edit("progress")
             assert task.status.message.edit.call_args.kwargs["reply_markup"] == markup
+            assert "确认停止上传" in task.status.message.edit.call_args.args[0]
             await cancel.cancel_callback.__wrapped__(None, first)
             assert not task.cancelled
             await cancel.upload_cancel_callback.__wrapped__(None, query(task, confirm, uid=2))
@@ -64,10 +68,15 @@ def test_continue_invalidates_old_confirmation_and_next_upload_requires_fresh_co
             await cancel.cancel_callback.__wrapped__(None, query(task))
             buttons = stop_keyboard(task).inline_keyboard[0]
             old = buttons[0].callback_data
+            await task.status.edit("latest progress")
+            timer = task._confirmation_runner
             await cancel.upload_cancel_callback.__wrapped__(
                 None, query(task, buttons[1].callback_data)
             )
             assert task.cancel_confirmation is None and not task.cancelled
+            assert task.status.message.edit.call_args.args[0].startswith("latest progress")
+            await asyncio.gather(timer, return_exceptions=True)
+            assert timer.cancelled() and task._confirmation_runner is None
             await cancel.upload_cancel_callback.__wrapped__(None, query(task, old))
             assert not task.cancelled
             await cancel.cancel_callback.__wrapped__(None, query(task))
@@ -100,8 +109,9 @@ def test_cancel_command_requires_upload_confirmation():
         with task.upload_scope():
             await cancel.cancel_command.__wrapped__(None, command)
             assert not task.cancelled
+            command.reply.assert_not_awaited()
             assert (
-                command.reply.call_args.kwargs["reply_markup"]
+                task.status.message.edit.call_args.kwargs["reply_markup"]
                 .inline_keyboard[0][0]
                 .callback_data.startswith("flow:confirm:")
             )
@@ -181,10 +191,111 @@ def test_upload_finishing_during_callback_keeps_terminal_buttons(confirm):
             button.answer = answer
             await handler.__wrapped__(None, button)
             status.message.edit_reply_markup.assert_not_awaited()
+            assert task._confirmation_runner is None
             assert (
                 status.message.edit.call_args.kwargs["reply_markup"]
                 .inline_keyboard[0][0]
                 .callback_data.startswith("flow:result:")
             )
+
+    asyncio.run(run())
+
+
+def test_unconfirmed_stop_expires_and_restores_latest_progress(monkeypatch):
+    monkeypatch.setattr(tasks, "UPLOAD_CANCEL_TIMEOUT", 0.02)
+
+    async def run():
+        task = active()
+        with task.upload_scope():
+            await task.status.edit("initial progress")
+            await cancel.cancel_callback.__wrapped__(None, query(task))
+            old = stop_keyboard(task).inline_keyboard[0][0].callback_data
+            await task.status.edit("latest progress")
+            assert "latest progress" not in task.status.message.edit.call_args.args[0]
+            await asyncio.wait_for(task._confirmation_runner, 1)
+            assert task.cancel_confirmation is None and not task.cancelled
+            assert task._confirmation_runner is None
+            assert task.status.message.edit.call_args.args[0].startswith("latest progress")
+            assert (
+                task.status.message.edit.call_args.kwargs["reply_markup"]
+                .inline_keyboard[0][0]
+                .callback_data.startswith("flow:cancel:")
+            )
+            await cancel.upload_cancel_callback.__wrapped__(None, query(task, old))
+            assert not task.cancelled
+
+    asyncio.run(run())
+
+
+def test_leaving_upload_restores_progress_without_waiting_for_another_update():
+    async def run():
+        task = active()
+        with task.upload_scope():
+            await task.status.edit("latest progress")
+            await cancel.cancel_callback.__wrapped__(None, query(task))
+            timer = task._confirmation_runner
+        await asyncio.wait_for(task._confirmation_runner, 1)
+        assert timer.cancelled() and task.cancel_confirmation is None
+        assert task.status.message.edit.call_args.args[0].startswith("latest progress")
+
+    asyncio.run(run())
+
+
+def test_expiry_cannot_overwrite_next_task():
+    async def run():
+        task = active()
+        with task.upload_scope():
+            await cancel.cancel_callback.__wrapped__(None, query(task))
+            timer = task._confirmation_runner
+            tasks.request_cancel(1)
+            tasks.finish(1, task)
+            fresh = active()
+            await fresh.status.edit("next task progress")
+            await asyncio.gather(timer, return_exceptions=True)
+            assert timer.cancelled()
+            fresh.status.message.edit.assert_awaited_once()
+            assert not fresh.cancelled and fresh.cancel_confirmation is None
+
+    asyncio.run(run())
+
+
+def test_expired_confirmation_is_rejected_before_timer_runs():
+    async def run():
+        task = active()
+        with task.upload_scope():
+            await cancel.cancel_callback.__wrapped__(None, query(task))
+            old = stop_keyboard(task).inline_keyboard[0][0].callback_data
+            task.cancel_confirmation_deadline = 0
+            await cancel.upload_cancel_callback.__wrapped__(None, query(task, old))
+            assert not task.cancelled
+
+    asyncio.run(run())
+
+
+def test_comment_confirmation_expires_to_progress_and_keeps_post(monkeypatch):
+    from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    from tgforward.comments.actions import CommentButton
+
+    monkeypatch.setattr(tasks, "UPLOAD_CANCEL_TIMEOUT", 0.02)
+
+    async def run():
+        task = tasks.register(1, "comments", 1)
+        client = NS(edit_message_text=AsyncMock())
+        markup = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("comments", callback_data="cmt:source:2:1")]]
+        )
+        message = NS(id=3, chat=NS(id=1), text="original post", entities=None, reply_markup=markup)
+        task.status = CommentButton(client, message, task=task)
+        with task.upload_scope():
+            await cancel.cancel_callback.__wrapped__(None, query(task))
+            await task.status.edit("latest comment progress")
+            assert "确认停止上传" in client.edit_message_text.call_args.args[2]
+            await asyncio.wait_for(task._confirmation_runner, 1)
+            body = client.edit_message_text.call_args.args[2]
+            assert "original post" in body and "latest comment progress" in body
+            assert "确认停止上传" not in body and not task.cancelled
+            button = client.edit_message_text.call_args.kwargs["reply_markup"].inline_keyboard[0][0]
+            assert button.text == tr("⏹ 停止提取评论")
 
     asyncio.run(run())

@@ -19,6 +19,8 @@ from tgforward.runtime import lifecycle
 from tgforward.transfers.results import CommentResult, ExtractionUnit
 from tgforward.ui.i18n import tr
 
+UPLOAD_CANCEL_TIMEOUT = 15
+
 
 class TaskAlreadyActive(Exception):
     """该用户已有进行中的任务。"""
@@ -69,6 +71,8 @@ class Task:
     uploading: bool = False
     upload_interrupted: bool = False
     cancel_confirmation: str | None = None
+    cancel_confirmation_deadline: float = 0
+    _confirmation_runner: asyncio.Task | None = field(default=None, repr=False)
 
     lifecycle_permit: lifecycle.Permit | None = field(default=None, repr=False)
 
@@ -194,6 +198,7 @@ class Task:
         return self.cancel_requested
 
     def set_cancel_reason(self, reason):
+        self.dismiss_upload_cancel()
         reason = CancelReason(reason)
         if self.cancel_reason is None or reason > self.cancel_reason:
             self.cancel_reason = reason
@@ -221,13 +226,57 @@ class Task:
             yield
         finally:
             self.uploading = False
-            self.cancel_confirmation = None
+            pending = self.cancel_confirmation is not None or self._confirmation_runner is not None
+            self.dismiss_upload_cancel()
+            if pending and not self.cancelled and self.status is not None:
+                self._confirmation_runner = asyncio.create_task(
+                    self._restore_upload_progress(self.status)
+                )
+
+    @property
+    def awaiting_upload_cancel(self):
+        return (
+            self.uploading
+            and not self.cancelled
+            and self.cancel_confirmation is not None
+            and time.monotonic() < self.cancel_confirmation_deadline
+        )
+
+    def dismiss_upload_cancel(self):
+        self.cancel_confirmation = None
+        self.cancel_confirmation_deadline = 0
+        if self._confirmation_runner is not None:
+            self._confirmation_runner.cancel()
+            self._confirmation_runner = None
+
+    async def _restore_upload_progress(self, status):
+        try:
+            if status is not None and self.status is status:
+                with suppress(Exception):
+                    await asyncio.wait_for(status.refresh_controls(), timeout=5)
+        finally:
+            if self._confirmation_runner is asyncio.current_task():
+                self._confirmation_runner = None
 
     def confirm_upload_cancel(self):
         if not self.uploading or self.cancelled:
             return False
-        if self.cancel_confirmation is None:
+        if not self.awaiting_upload_cancel:
+            self.dismiss_upload_cancel()
             self.cancel_confirmation = uuid4().hex[:12]
+            self.cancel_confirmation_deadline = time.monotonic() + UPLOAD_CANCEL_TIMEOUT
+            confirmation = self.cancel_confirmation
+            deadline = self.cancel_confirmation_deadline
+
+            async def expire():
+                await asyncio.sleep(max(0, deadline - time.monotonic()))
+                if self.cancel_confirmation != confirmation:
+                    return
+                self.cancel_confirmation = None
+                self.cancel_confirmation_deadline = 0
+                await self._restore_upload_progress(self.status)
+
+            self._confirmation_runner = asyncio.create_task(expire())
         return True
 
     def advance(self, *, success: bool = False) -> None:
@@ -363,6 +412,8 @@ def finish(user_id: int, expected: Task | None = None) -> None:
     if expected is not None and _tasks.get(user_id) is not expected:
         return
     finished = _tasks.pop(user_id, None)
+    if finished is not None:
+        finished.dismiss_upload_cancel()
     if finished and (finished.cancelled or finished.timed_out):
         _last_finished.pop(user_id, None)
     else:

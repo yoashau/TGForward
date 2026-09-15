@@ -386,7 +386,7 @@
   "tasks.queued": "📥 Added to the waiting queue at position {0} ({1} messages in this request).\nIt will start automatically; stopping the current task continues with the next request.",
   "tasks.queue_full": "⚠️ The waiting queue has reached {0} requests. This request was not added; retry after some requests finish or are removed.",
   "tasks.queue_cleared": "✅ Removed {0} waiting requests. The current task continues.",
-  "tasks.confirm_upload_cancel": "A file is uploading. Extracting again after stopping requires downloading and uploading again; delivered content will remain. Confirm whether to stop.",
+  "tasks.confirm_upload_cancel": "⚠️ Stop uploading?\n\nExtracting again after stopping requires downloading and uploading again; delivered content will remain.\nUploading continues. If you do not confirm within {0} seconds, the progress display will return automatically.",
   "等待任务间隔": "Waiting between requests",
   "▶️ 排队请求开始执行。": "▶️ The queued request is starting.",
   "移出队列": "Remove from queue",

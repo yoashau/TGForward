@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-from contextlib import suppress
 from types import SimpleNamespace
 
 from pyrogram.errors import MessageNotModified
@@ -55,6 +54,7 @@ class CommentButton(TaskStatus):
             base = base.rsplit(section, 1)[0]
         self.base_text = RichText(base, original.entities)
         self.lock = asyncio.Lock()
+        self._progress_text = tr(DETAILS["running"])
 
     def _keyboard(self, outcome):
         if not isinstance(self.original_markup, InlineKeyboardMarkup):
@@ -86,6 +86,8 @@ class CommentButton(TaskStatus):
         return InlineKeyboardMarkup(rows)
 
     async def _render(self, text):
+        if self.outcome is None:
+            text = self._display_progress(text)
         # 字节进度带有加粗标记；评论区域使用纯文本，原帖实体独立保留。
         detail = str(text).replace("**", "")
         if detail.startswith(tr("评论提取：")):
@@ -134,7 +136,8 @@ class CommentButton(TaskStatus):
             if self.outcome is not None or not self._can_render():
                 return self
             self.markup = self._keyboard("running")
-            await self._render(text or tr(DETAILS["running"]))
+            self._progress_text = text or tr(DETAILS["running"])
+            await self._render(self._progress_text)
         return self
 
     async def finish(self, text="", outcome="success"):
@@ -143,6 +146,8 @@ class CommentButton(TaskStatus):
         async with self.lock:
             if self.outcome is None:
                 self.outcome = outcome
+                if self.task is not None and self.task.status is self:
+                    self.task.dismiss_upload_cancel()
             if self.outcome != outcome or self.terminal_rendered or not self._can_render():
                 return self
             self.markup = self._keyboard(outcome)
@@ -154,6 +159,7 @@ class CommentButton(TaskStatus):
             if self.outcome is not None or not self._can_render():
                 return self
             self.markup = self._keyboard("running")
+            self._progress_text = text
             await self._render(text)
         return self
 
@@ -161,7 +167,4 @@ class CommentButton(TaskStatus):
         async with self.lock:
             if self.outcome is None and self._can_render():
                 self.markup = self._keyboard("running")
-                with suppress(MessageNotModified):
-                    await self.client.edit_message_reply_markup(
-                        self.chat.id, self.id, reply_markup=self.markup
-                    )
+                await self._render(self._progress_text)

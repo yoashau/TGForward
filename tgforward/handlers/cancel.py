@@ -4,7 +4,7 @@ from pyrogram import filters
 
 from tgforward.runtime import tasks
 from tgforward.telegram.clients import bot
-from tgforward.transfers.progress import stop_keyboard
+from tgforward.transfers.progress import TaskStatus
 from tgforward.ui import dialogue, state
 from tgforward.ui.i18n import tr
 from tgforward.ui.interaction import interaction
@@ -25,7 +25,9 @@ async def _cancel(uid):
 async def cancel_command(client, message):
     task = tasks.get(message.from_user.id)
     if task is not None and task.confirm_upload_cancel():
-        await message.reply(tr("tasks.confirm_upload_cancel"), reply_markup=stop_keyboard(task))
+        if task.status is None:
+            task.status = TaskStatus.wrap(await message.reply(tr(task.stage)), task)
+        await task.status.refresh_controls()
         return
     await message.reply(await _cancel(message.from_user.id))
 
@@ -65,11 +67,12 @@ async def cancel_callback(client, query):
     else:
         if task.confirm_upload_cancel():
             status = task.status
-            await query.answer(tr("tasks.confirm_upload_cancel"), show_alert=True)
+            await query.answer()
             if status is not None:
                 await status.refresh_controls()
             elif tasks.get(uid) is task and task.uploading and not task.cancelled:
-                await query.message.edit_reply_markup(reply_markup=stop_keyboard(task))
+                task.status = TaskStatus.wrap(query.message, task)
+                await task.status.refresh_controls()
             return
         tasks.request_cancel(uid)
         await query.answer(tr("正在取消…"))
@@ -95,13 +98,12 @@ async def upload_cancel_callback(client, query):
     if (
         task is None
         or task.token != token
-        or not task.uploading
-        or task.cancelled
+        or not task.awaiting_upload_cancel
         or task.cancel_confirmation != confirmation
     ):
         await query.answer(tr("该操作已结束，此按钮已过期。"))
         return
-    task.cancel_confirmation = None
+    task.dismiss_upload_cancel()
     status = task.status
     is_status_message = status is not None and (query.message.chat.id, query.message.id) == (
         status.chat.id,

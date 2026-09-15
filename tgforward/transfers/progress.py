@@ -11,7 +11,7 @@ import time
 from pyrogram import StopTransmission
 from pyrogram.errors import MessageNotModified
 
-from tgforward.runtime.tasks import CancelReason, Task
+from tgforward.runtime.tasks import UPLOAD_CANCEL_TIMEOUT, CancelReason, Task
 from tgforward.transfers.results import SideEffectRole
 from tgforward.ui.i18n import tr
 
@@ -19,7 +19,7 @@ from tgforward.ui.i18n import tr
 def stop_keyboard(task):
     from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-    if task.cancel_confirmation is not None and task.uploading and not task.cancelled:
+    if task.awaiting_upload_cancel:
         suffix = f"{task.user_id}:{task.token}:{task.cancel_confirmation}"
         return InlineKeyboardMarkup(
             [
@@ -95,6 +95,8 @@ class TaskStatus:
         self.comment_action = None
         self.terminal_rendered = False
         self._mutation = asyncio.Lock()
+        self._progress_text = tr(task.stage) if task is not None else ""
+        self._progress_kwargs = {}
 
     @classmethod
     def wrap(cls, message, task):
@@ -133,17 +135,31 @@ class TaskStatus:
                 and self.task.active_unit is not self.unit
             ):
                 return self
-            kwargs["reply_markup"] = None if self.task.cancelled else stop_keyboard(self.task)
-            await self.message.edit(text + "\n\n" + self.task.media_progress(), **kwargs)
+            self._progress_text = text
+            self._progress_kwargs = kwargs
+            await self._render_progress()
         return self
+
+    def _display_progress(self, text):
+        if self.task is not None and self.task.awaiting_upload_cancel:
+            return tr("tasks.confirm_upload_cancel", UPLOAD_CANCEL_TIMEOUT)
+        return text
+
+    async def _render_progress(self):
+        kwargs = {
+            **self._progress_kwargs,
+            "reply_markup": None if self.task.cancelled else stop_keyboard(self.task),
+        }
+        with contextlib.suppress(MessageNotModified):
+            await self.message.edit(
+                self._display_progress(self._progress_text) + "\n\n" + self.task.media_progress(),
+                **kwargs,
+            )
 
     async def refresh_controls(self):
         async with self._mutation:
             if self.outcome is None and self._can_render():
-                with contextlib.suppress(MessageNotModified):
-                    await self.message.edit_reply_markup(
-                        reply_markup=None if self.task.cancelled else stop_keyboard(self.task)
-                    )
+                await self._render_progress()
 
     async def finish(self, text, outcome="success"):
         async with self._mutation:
@@ -187,6 +203,8 @@ class TaskStatus:
                     )
             if self.outcome is None:
                 self.outcome = outcome
+                if self.task.status is self:
+                    self.task.dismiss_upload_cancel()
             if self.outcome != outcome or self.terminal_rendered or not self._can_render():
                 return self
             with contextlib.suppress(MessageNotModified):
