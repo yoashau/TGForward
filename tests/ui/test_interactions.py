@@ -239,7 +239,8 @@ def test_router_returns_without_waiting_for_transfer(monkeypatch):
 
         async def slow(*a, **kw):
             started.set()
-            await kw["task"].wait_or_cancel(3600)
+            if a[1].message_id == 1:
+                await kw["task"].wait_or_cancel(3600)
 
         monkeypatch.setattr(router, "extract_single", slow)
         first = msg("https://t.me/example/1")
@@ -248,9 +249,13 @@ def test_router_returns_without_waiting_for_transfer(monkeypatch):
         task = tasks.get(1)
         second = msg("https://t.me/example/2")
         await router.smart_router(None, second)
-        assert "当前请求未加入" in second.reply.call_args.args[0]
+        assert "已加入等待队列" in second.reply.call_args.args[0]
+        assert tasks.queued_count(1) == 1
         tasks.request_cancel(1)
         await task.runner
+        next_task = tasks.get(1)
+        if next_task is not None:
+            await next_task.runner
         assert not tasks.is_active(1)
 
     asyncio.run(run())

@@ -2,9 +2,11 @@
 
 import asyncio
 
+from pyrogram import StopTransmission
 from pyrogram.errors import EntitiesTooLong, EntityBoundsInvalid, FloodWait, RPCError
 
 from tgforward.runtime import lifecycle
+from tgforward.runtime.tasks import TaskCancelled
 from tgforward.transfers.results import SideEffectRole
 
 
@@ -19,8 +21,21 @@ async def execute(make_call, task, state, parts, *, retryable=(), batch=False):
             state.authorize(part)
     for part in parts:
         state.begin_attempt(part)
+
+    def stopped_upload():
+        if task is not None and task.uploading and task.upload_interrupted:
+            for part in parts:
+                state.reject(part, "upload stopped before final delivery")
+                state.finalize_failed(part)
+            raise TaskCancelled()
+
     try:
         result = await make_call()
+    except StopTransmission:
+        stopped_upload()
+        for part in parts:
+            state.mark_uncertain(part, "transmission stopped without delivery confirmation")
+        raise
     except (FloodWait, EntityBoundsInvalid, EntitiesTooLong, *retryable) as exc:
         for part in parts:
             state.retryable_rejection(part, str(exc))
@@ -34,6 +49,8 @@ async def execute(make_call, task, state, parts, *, retryable=(), batch=False):
         for part in parts:
             state.mark_uncertain(part, str(exc))
         raise
+    if result is None:
+        stopped_upload()
     if batch:
         # 缺失或重复的返回不能建立可靠的源成员位置映射。
         valid = isinstance(result, (list, tuple)) and len(result) == len(parts)

@@ -14,7 +14,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from functools import partial
 
-from pyrogram import enums
+from pyrogram import StopTransmission, enums
 from pyrogram.errors import (
     ChannelPrivate,
     ChatForwardsRestricted,
@@ -193,6 +193,7 @@ async def _send(
     state=None,
     parts=(),
     batch=False,
+    uploading=False,
 ):
     """执行一次 Telegram 发送类调用：FloodWait 分段等待后重试，
     PeerIdInvalid 转为用户可读的 TransferError。
@@ -215,20 +216,21 @@ async def _send(
             # 返回后先由业务层提交已送达状态，不在提交之前抛协作式取消。
             if task is not None:
                 lifecycle.authorize_side_effect(task, role)
-            result = (
-                await rpc.execute(
-                    make_call,
-                    task,
-                    state,
-                    parts,
-                    batch=batch,
-                    retryable=(ChannelPrivate, ChatForwardsRestricted, PeerIdInvalid)
-                    if copying and _copy_fallback.get()
-                    else (),
+            with task.upload_scope() if task is not None and uploading else nullcontext():
+                result = (
+                    await rpc.execute(
+                        make_call,
+                        task,
+                        state,
+                        parts,
+                        batch=batch,
+                        retryable=(ChannelPrivate, ChatForwardsRestricted, PeerIdInvalid)
+                        if copying and _copy_fallback.get()
+                        else (),
+                    )
+                    if state is not None and role == SideEffectRole.FINAL_DELIVERY
+                    else await make_call()
                 )
-                if state is not None and role == SideEffectRole.FINAL_DELIVERY
-                else await make_call()
-            )
             if result is None or isinstance(result, (list, tuple)) and not result:
                 if task:
                     task.check_cancel()
@@ -247,6 +249,10 @@ async def _send(
                     + tr("部分内容发送结果无法确认，重新提取可能造成重复。")
                 )
             return result
+        except StopTransmission:
+            if task is not None:
+                task.check_cancel()
+            raise
         except FloodWait as exc:
             logger.warning("发送限流 wait=%s; retry=server_rejected", exc.value)
             await heartbeat_sleep(max(0, exc.value) + 1, task, tr("等待 Telegram 发送限流解除"))
@@ -1067,6 +1073,7 @@ async def _send_album_physical(
             task,
             parts=[f"media:{m.id}" for m in group],
             batch=True,
+            uploading=True,
         )
         _commit_sent(task, group)
         return sent
@@ -1296,7 +1303,7 @@ async def _upload_large(
             progress=progress,
         )
 
-    sent = await _send(make_call, task, role=SideEffectRole.STAGING_UPLOAD)
+    sent = await _send(make_call, task, role=SideEffectRole.STAGING_UPLOAD, uploading=True)
     copy_kwargs = {**_destination_kwargs(destination), "parse_mode": enums.ParseMode.DISABLED}
     return await _send(
         partial(uploader.copy_message, target, LOG_GROUP, sent.id, **copy_kwargs),
@@ -1409,4 +1416,4 @@ async def _upload_regular(
             **_destination_kwargs(destination),
         )
 
-    return await _send(make_call, task, parts=[f"media:{message.id}"])
+    return await _send(make_call, task, parts=[f"media:{message.id}"], uploading=True)

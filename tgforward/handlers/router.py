@@ -6,8 +6,7 @@
 3. 链接写在媒体说明文字（caption）里也能识别
 
 转发相册时 Telegram 会拆成多条消息逐条送达：首条被接受后，其
-media_group_id 会被登记 120 秒，同组后续消息静默跳过，避免
-"已有任务进行中"的噪音。
+media_group_id 会被登记 120 秒，同组后续消息静默跳过。
 """
 
 import asyncio
@@ -15,15 +14,15 @@ import logging
 import time
 
 from pyrogram import filters
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from tgforward.handlers.common import DENY_TEXT
 from tgforward.runtime import diagnostics, lifecycle, tasks
-from tgforward.runtime.tasks import TaskAlreadyActive, TaskCancelled, TaskCooldown
+from tgforward.runtime.tasks import TaskCancelled
 from tgforward.storage.users import is_whitelisted
 from tgforward.telegram.clients import bot
 from tgforward.transfers.extractor import extract_range, extract_single
 from tgforward.ui import state
-from tgforward.ui.dialogue import cancel_keyboard
 from tgforward.ui.i18n import tr
 from tgforward.ui.interaction import interaction
 from tgforward.utils.links import MessageLink, find_links, parse_batch_count, parse_link
@@ -204,28 +203,46 @@ async def smart_router(client, message):
 
     total = sum(count for _, count, _ in plan)
     try:
-        task = tasks.register(uid, "batch", total)
-    except TaskAlreadyActive:
-        await message.reply(
-            tr(
-                "tasks.busy",
-                tr(tasks.get(uid).stage),
-            ),
-            reply_markup=cancel_keyboard(uid),
+        request, position = tasks.submit(
+            uid, "batch", total, lambda task: _run_plan(message, plan, task), message.reply
         )
+    except tasks.QueueFull:
+        await message.reply(tr("tasks.queue_full", tasks.QUEUE_LIMIT))
         return
-    except TaskCooldown as e:
-        await message.reply(tr("⏳ 操作太频繁，请 {0} 秒后再试。", int(e.remaining) + 1))
+    except lifecycle.StalePermit:
         return
 
     _mark_group_handled(uid, gid)
-
-    tasks.launch(task, lambda: _run_plan(message, plan, task), message.reply)
+    if position:
+        request.notice = await message.reply(
+            tr("tasks.queued", position, total),
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            tr("移出队列"), callback_data=f"flow:queue:{uid}:{request.token}"
+                        ),
+                        InlineKeyboardButton(
+                            tr("清空等待队列"),
+                            callback_data=f"flow:clearqueue:{uid}:{request.token}",
+                        ),
+                    ]
+                ]
+            ),
+        )
+        if not tasks.is_queued(uid, request.token):
+            await request.notice.edit(
+                tr("✅ 已移出队列。") if request.cancelled else tr("▶️ 排队请求开始执行。"),
+                reply_markup=None,
+            )
+            if request.cancelled and request.messages is not None:
+                request.messages.later()
 
 
 async def _run_plan(message, plan, task):
     try:
         for i, (ref, count, url) in enumerate(plan):
+            task.check_cancel()
             task.active_unit = task.extraction_unit((i, url), count)
             try:
                 if count > 1:
@@ -253,4 +270,3 @@ async def _run_plan(message, plan, task):
                 getattr(message, "media_group_id", None),
                 None,
             )
-        tasks.finish(message.from_user.id, task)

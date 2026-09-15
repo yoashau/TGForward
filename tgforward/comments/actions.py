@@ -2,12 +2,13 @@
 
 import asyncio
 import logging
+from contextlib import suppress
 from types import SimpleNamespace
 
 from pyrogram.errors import MessageNotModified
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from tgforward.transfers.progress import TaskStatus
+from tgforward.transfers.progress import TaskStatus, stop_keyboard
 from tgforward.ui.i18n import ENGLISH, tr
 from tgforward.utils.text import (
     RichText,
@@ -67,7 +68,9 @@ class CommentButton(TaskStatus):
                     continue
                 callback = button.callback_data
                 if outcome == "running" and self.task is not None:
-                    callback = f"flow:cancel:{self.task.user_id}:{self.task.token}"
+                    if not self.task.cancelled:
+                        output.extend(stop_keyboard(self.task).inline_keyboard[0])
+                    continue
                 elif outcome == "success":
                     owner = (
                         self.task.user_id if self.task is not None else str(callback).split(":")[-1]
@@ -153,3 +156,12 @@ class CommentButton(TaskStatus):
             self.markup = self._keyboard("running")
             await self._render(text)
         return self
+
+    async def refresh_controls(self):
+        async with self.lock:
+            if self.outcome is None and self._can_render():
+                self.markup = self._keyboard("running")
+                with suppress(MessageNotModified):
+                    await self.client.edit_message_reply_markup(
+                        self.chat.id, self.id, reply_markup=self.markup
+                    )

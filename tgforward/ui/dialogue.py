@@ -12,6 +12,10 @@ from tgforward.ui.i18n import tr
 def cancel_keyboard(uid: int):
     st = state.get(uid)
     task = tasks.get(uid)
+    if st is None and task is not None:
+        from tgforward.transfers.progress import stop_keyboard
+
+        return stop_keyboard(task)
     token = st.token if st else task.token if task else None
     if token is None:
         return None

@@ -7,7 +7,9 @@
 import asyncio
 import logging
 import time
-from contextlib import suppress
+from collections import OrderedDict
+from contextlib import contextmanager, suppress
+from contextvars import copy_context
 from dataclasses import dataclass, field
 from enum import IntEnum
 from uuid import uuid4
@@ -20,6 +22,10 @@ from tgforward.ui.i18n import tr
 
 class TaskAlreadyActive(Exception):
     """该用户已有进行中的任务。"""
+
+
+class QueueFull(Exception):
+    """该用户的等待队列已满。"""
 
 
 class TaskCooldown(Exception):
@@ -60,6 +66,9 @@ class Task:
     stage: str = "获取消息"
     timed_out: bool = False
     status: object | None = field(default=None, repr=False)
+    uploading: bool = False
+    upload_interrupted: bool = False
+    cancel_confirmation: str | None = None
 
     lifecycle_permit: lifecycle.Permit | None = field(default=None, repr=False)
 
@@ -204,6 +213,23 @@ class Task:
         if self.cancel_requested:
             raise TaskCancelled()
 
+    @contextmanager
+    def upload_scope(self):
+        self.uploading = True
+        self.upload_interrupted = False
+        try:
+            yield
+        finally:
+            self.uploading = False
+            self.cancel_confirmation = None
+
+    def confirm_upload_cancel(self):
+        if not self.uploading or self.cancelled:
+            return False
+        if self.cancel_confirmation is None:
+            self.cancel_confirmation = uuid4().hex[:12]
+        return True
+
     def advance(self, *, success: bool = False) -> None:
         self.touch()
         self.current += 1
@@ -215,9 +241,107 @@ class Task:
 
 _tasks: dict[int, Task] = {}
 _last_finished: dict[int, float] = {}
+_shutting_down = False
+QUEUE_LIMIT = 9999
+
+
+@dataclass
+class QueuedRequest:
+    user_id: int
+    kind: str
+    total: int
+    work: object
+    notify: object
+    permit: lifecycle.Permit
+    context: object = field(default_factory=copy_context, repr=False)
+    token: str = field(default_factory=lambda: uuid4().hex[:12])
+    messages: object | None = field(default=None, repr=False)
+    notice: object | None = field(default=None, repr=False)
+    cancelled: bool = False
+
+
+_queues: dict[int, OrderedDict[str, QueuedRequest]] = {}
+
+
+def queued_count(user_id):
+    return len(_queues.get(user_id, ()))
+
+
+def is_queued(user_id, token):
+    return token in _queues.get(user_id, {})
+
+
+def submit(user_id, kind, total, work, notify):
+    """只为队首创建 Task/runner；等待请求按 FIFO 保存，增删均为 O(1)。"""
+    from tgforward.ui import interaction as ui
+
+    if _shutting_down:
+        raise lifecycle.StalePermit("task service is shutting down")
+    permit = lifecycle.capture_permit(user_id)
+    if queued_count(user_id) >= QUEUE_LIMIT:
+        raise QueueFull()
+    request = QueuedRequest(user_id, kind, total, work, notify, permit, messages=ui.defer())
+    if is_active(user_id):
+        _queues.setdefault(user_id, OrderedDict())[request.token] = request
+        return request, queued_count(user_id)
+    _start_request(request)
+    return request, 0
+
+
+def _start_request(request):
+    lifecycle.assert_current(request.permit)
+    uid = request.user_id
+    delay = max(0, _last_finished.get(uid, 0) + USER_COOLDOWN - time.monotonic())
+    task = Task(
+        uid, request.kind, request.total, token=request.token, lifecycle_permit=request.permit
+    )
+    _tasks[uid] = task
+
+    async def work():
+        await task.wait_or_cancel(delay, tr("等待任务间隔"))
+        if request.notice is not None:
+            with suppress(Exception):
+                await asyncio.wait_for(
+                    request.notice.edit(tr("▶️ 排队请求开始执行。"), reply_markup=None), timeout=5
+                )
+        await request.work(task)
+
+    request.context.run(launch, task, work, request.notify)
+
+
+def _release_requests(requests):
+    from tgforward.ui.interaction import Messages
+
+    messages = Messages()
+    for request in requests:
+        request.cancelled = True
+        if request.messages is not None:
+            for message in list(request.messages.items.values()):
+                messages.add(message)
+    if messages.items:
+        messages.later()
+
+
+def remove_queued(user_id, token):
+    queue = _queues.get(user_id)
+    request = queue.pop(token, None) if queue else None
+    if request is None:
+        return False
+    if not queue:
+        _queues.pop(user_id, None)
+    _release_requests([request])
+    return True
+
+
+def clear_queue(user_id):
+    queue = _queues.pop(user_id, {})
+    _release_requests(queue.values())
+    return len(queue)
 
 
 def register(user_id: int, kind: str, total: int) -> Task:
+    if _shutting_down:
+        raise lifecycle.StalePermit("task service is shutting down")
     last = _last_finished.get(user_id)
     if last is not None:
         elapsed = time.monotonic() - last
@@ -243,6 +367,18 @@ def finish(user_id: int, expected: Task | None = None) -> None:
         _last_finished.pop(user_id, None)
     else:
         _last_finished[user_id] = time.monotonic()
+    if finished is not None:
+        queue = _queues.get(user_id)
+        while queue:
+            _, request = queue.popitem(last=False)
+            if not queue:
+                _queues.pop(user_id, None)
+            try:
+                _start_request(request)
+            except lifecycle.StalePermit:
+                _release_requests([request])
+                continue
+            break
 
 
 def is_active(user_id: int) -> bool:
@@ -255,6 +391,8 @@ def all_active() -> dict[int, Task]:
 
 
 def request_cancel(user_id: int, reason=CancelReason.USER) -> bool:
+    if reason in (CancelReason.REVOKED, CancelReason.SHUTDOWN):
+        clear_queue(user_id)
     task = _tasks.get(user_id)
     if task is None:
         return False
@@ -323,7 +461,7 @@ def launch(task: Task, work, notify) -> None:
                 kind = tr("评论提取") if task.kind == "comments" else tr("消息提取")
                 await say(
                     tr(
-                        "⏳ {0}在「{1}」阶段暂时没有新进度，可发送 /cancel 停止。",
+                        "⏳ {0}在「{1}」阶段暂时没有新进度。",
                         kind,
                         tr(task.stage),
                     )
@@ -382,8 +520,14 @@ def launch(task: Task, work, notify) -> None:
 
 
 async def shutdown() -> None:
+    global _shutting_down
+    _shutting_down = True
+    for uid in list(_queues):
+        clear_queue(uid)
     runners = [t.runner for t in _tasks.values() if t.runner and not t.runner.done()]
     for task in list(_tasks.values()):
         request_cancel(task.user_id, CancelReason.SHUTDOWN)
+        if task.runner is None:
+            finish(task.user_id, task)
     if runners:
         await asyncio.gather(*runners, return_exceptions=True)

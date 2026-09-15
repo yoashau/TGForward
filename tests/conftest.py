@@ -15,8 +15,11 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def isolate_menu(monkeypatch):
+    from tgforward.runtime import tasks
     from tgforward.ui import panel
 
+    monkeypatch.setattr(tasks, "_queues", {})
+    monkeypatch.setattr(tasks, "_shutting_down", False)
     panel._panels.clear()
     panel._keyboards_removed.clear()
     yield

@@ -19,6 +19,18 @@ from tgforward.ui.i18n import tr
 def stop_keyboard(task):
     from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+    if task.cancel_confirmation is not None and task.uploading and not task.cancelled:
+        suffix = f"{task.user_id}:{task.token}:{task.cancel_confirmation}"
+        return InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        tr("⚠️ 确认停止上传"), callback_data=f"flow:confirm:{suffix}"
+                    ),
+                    InlineKeyboardButton(tr("▶️ 继续上传"), callback_data=f"flow:continue:{suffix}"),
+                ]
+            ]
+        )
     return InlineKeyboardMarkup(
         [
             [
@@ -125,6 +137,14 @@ class TaskStatus:
             await self.message.edit(text + "\n\n" + self.task.media_progress(), **kwargs)
         return self
 
+    async def refresh_controls(self):
+        async with self._mutation:
+            if self.outcome is None and self._can_render():
+                with contextlib.suppress(MessageNotModified):
+                    await self.message.edit_reply_markup(
+                        reply_markup=None if self.task.cancelled else stop_keyboard(self.task)
+                    )
+
     async def finish(self, text, outcome="success"):
         async with self._mutation:
             unit = self.unit
@@ -215,17 +235,15 @@ def make_progress(
     last_current = -1
     last_step = None  # 回调局部状态，失败/取消后随回调释放；不留全局 key。
 
+    def check_cancel():
+        if task is not None and task.cancel_requested:
+            if task.uploading and role != SideEffectRole.DOWNLOAD:
+                task.upload_interrupted = True
+            raise StopTransmission()
+
     async def on_progress(current: int, total: int) -> None:
         nonlocal last_current, last_step
-        if (
-            task is not None
-            and task.cancel_requested
-            and (
-                role != SideEffectRole.FINAL_DELIVERY
-                or task.cancel_reason not in (None, CancelReason.USER)
-            )
-        ):
-            raise StopTransmission()
+        check_cancel()
         if task is not None and current != last_current:
             task.touch(label)
         last_current = current
@@ -277,6 +295,7 @@ def make_progress(
 
             if percent >= 100:
                 last_step = None
+        check_cancel()
 
     _start = time.monotonic()
     return on_progress

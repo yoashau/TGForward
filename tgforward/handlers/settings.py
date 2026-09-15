@@ -307,7 +307,7 @@ async def _handle_setreplacement(message, uid) -> bool:
     match = re.fullmatch(r"'(.+)' '(.+)'", (message.text or "").strip())
     if not match:
         await dialogue.prompt(
-            message, tr("❌ 格式不正确。正确格式：`'原词' '替换词'`，可重新发送或 /cancel 取消。")
+            message, tr("❌ 格式不正确。正确格式：`'原词' '替换词'`，请重新发送。")
         )
         return False
     word, replacement = match.groups()

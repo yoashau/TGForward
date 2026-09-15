@@ -148,7 +148,13 @@ def interaction(func):
             from tgforward.transfers.progress import is_task_result
             from tgforward.ui.panel import message_key
 
-            is_comment = str(update.data).startswith(("cmt:", "flow:cancel:"))
+            is_comment = str(update.data).startswith(
+                ("cmt:", "flow:cancel:", "flow:confirm:", "flow:continue:")
+            )
+            if str(update.data).startswith("flow:"):
+                owner = _owners.get(message_key(update.message))
+                if owner is not None and owner.deferred:
+                    messages = owner
             managed_comment = is_comment and is_task_result(update.message)
             if managed_comment:
                 key = message_key(update.message)

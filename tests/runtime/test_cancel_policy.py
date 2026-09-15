@@ -61,16 +61,13 @@ def test_cancel_event_interrupts_long_wait():
 
 @pytest.mark.parametrize("role", list(SideEffectRole))
 @pytest.mark.parametrize("reason", list(tasks.CancelReason))
-def test_progress_cancellation_depends_on_side_effect_role(role, reason):
+def test_progress_cancellation_stops_every_transfer_role(role, reason):
     async def run():
         task = tasks.Task(891, "single", 1)
         task.set_cancel_reason(reason)
         callback = make_progress(NS(), 1, 2, task, role=role)
-        if role == SideEffectRole.FINAL_DELIVERY and reason == tasks.CancelReason.USER:
+        with pytest.raises(StopTransmission):
             await callback(0, 0)
-        else:
-            with pytest.raises(StopTransmission):
-                await callback(0, 0)
 
     asyncio.run(run())
 

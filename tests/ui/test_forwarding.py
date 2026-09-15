@@ -68,3 +68,43 @@ class TestGroupDedup:
         from tgforward.handlers import router
 
         router._recent_groups.clear()
+
+
+def test_queued_forward_album_is_deduplicated_and_plan_is_preserved(monkeypatch):
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from tests.ui.test_interactions import msg
+    from tgforward.handlers import router
+    from tgforward.runtime import tasks
+
+    monkeypatch.setattr(tasks, "_tasks", {})
+    monkeypatch.setattr(tasks, "_last_finished", {})
+    monkeypatch.setattr(tasks, "USER_COOLDOWN", 0)
+    monkeypatch.setattr(router, "is_whitelisted", AsyncMock(return_value=True))
+    monkeypatch.setattr(router, "_recent_groups", {})
+
+    async def run():
+        first = tasks.register(1, "comments", 1)
+        single, batch = AsyncMock(), AsyncMock()
+        monkeypatch.setattr(router, "extract_single", single)
+        monkeypatch.setattr(router, "extract_range", batch)
+        message = msg("https://t.me/channelname/200 3")
+        message.forward_from_chat = SimpleNamespace(username="channelname", id=-100111)
+        message.forward_from_message_id = 100
+        message.media_group_id = "queued-album"
+        await router.smart_router.__wrapped__(None, message)
+        await router.smart_router.__wrapped__(None, message)
+        assert tasks.queued_count(1) == 1 and message.reply.await_count == 1
+        task_request = message.reply.call_args.kwargs["reply_markup"].inline_keyboard[0][0]
+        assert task_request.callback_data.startswith("flow:queue:1:")
+        tasks.finish(1, first)
+        task = tasks.get(1)
+        # 多链接间隔本身已有取消测试，这里只验证排队后保留原计划。
+        task.wait_or_cancel = AsyncMock()
+        await task.runner
+        assert single.call_args.args[1] == MessageLink("channelname", 100, False)
+        assert batch.call_args.args[1:3] == (MessageLink("channelname", 200, False), 3)
+        await router.shutdown()
+
+    asyncio.run(run())
