@@ -3,14 +3,16 @@
 import asyncio
 import contextlib
 import functools
+import logging
 from types import SimpleNamespace
 
-from pyrogram import filters
+from pyrogram import enums, filters
 
 from tgforward import __version__
 from tgforward.config import OWNER_ID
 from tgforward.handlers.common import ensure_whitelisted
 from tgforward.runtime import diagnostics, tasks
+from tgforward.runtime.tasks import TaskCancelled
 from tgforward.storage.users import (
     count_whitelisted,
     delete_user,
@@ -23,9 +25,40 @@ from tgforward.storage.users import (
 )
 from tgforward.telegram import clients as clients_registry
 from tgforward.telegram.clients import bot, uptime_text
+from tgforward.telegram.wait import retry_flood
+from tgforward.transfers import transfer
 from tgforward.ui import dialogue, state
 from tgforward.ui.i18n import language_context, tr, user_language
 from tgforward.ui.interaction import interaction
+from tgforward.utils.text import utf16_len
+
+logger = logging.getLogger(__name__)
+# 低于 Bot 全局约 30 条/秒的上限，并与搬运发送共用时隙，避免两路叠加快触发限流。
+BROADCAST_INTERVAL = 0.1
+BROADCAST_PROGRESS_EVERY = 20
+_broadcast_stops: dict[int, asyncio.Event] = {}
+
+
+class _BroadcastStop:
+    """让 /cancel 能打断广播发送和限流等待，而不占用提取任务槽。"""
+
+    def __init__(self, event: asyncio.Event):
+        self.cancel_event = event
+
+    def check_cancel(self):
+        if self.cancel_event.is_set():
+            raise TaskCancelled()
+
+    def touch(self, stage=None):
+        self.check_cancel()
+
+
+def stop_broadcast(user_id) -> bool:
+    event = _broadcast_stops.get(int(user_id))
+    if event is None or event.is_set():
+        return False
+    event.set()
+    return True
 
 
 def owner_only(func):
@@ -151,23 +184,87 @@ async def status_handler(client, message):
 async def broadcast_handler(client, message):
     parts = (message.text or "").split(" ", 1)
     if len(parts) < 2 or not parts[1].strip():
-        await message.reply(tr("用法：/broadcast `<文本>`\n向全部白名单用户发送一条消息。"))
+        await message.reply(tr("用法：/broadcast `<文本>`\n向管理员和全部白名单用户发送一条消息。"))
         return
 
     text = parts[1].strip()
-    user_ids = await list_whitelisted_ids()
-    status = await message.reply(tr("📣 开始向 {0} 个白名单用户广播……", len(user_ids)))
+    if utf16_len(text) > 4096:
+        await message.reply(tr("广播内容超过 Telegram 单条上限（4096），未发送。"))
+        return
+    uid = message.from_user.id
+    if uid in _broadcast_stops:
+        await message.reply(tr("已有广播正在进行，发送 /cancel 可停止。"))
+        return
+    stop = asyncio.Event()
+    _broadcast_stops[uid] = stop
+    handle = _BroadcastStop(stop)
+    try:
+        # 管理员始终有权限，但未必写在白名单表里。
+        user_ids = list(dict.fromkeys([*OWNER_ID, *await list_whitelisted_ids()]))
+        total = len(user_ids)
+        if stop.is_set():
+            await message.reply(
+                tr("⏹ 广播已停止：成功 {0}，失败 {1}，未发送 {2}。", 0, 0, total)
+            )
+            return
+        status = await message.reply(tr("📣 开始向 {0} 个用户广播……", total))
+        ok = fail = 0
 
-    ok = fail = 0
-    for user_id in user_ids:
+        def flood_notice(remaining):
+            return tr(
+                "广播被 Telegram 限流，约 {0} 秒后继续（已成功 {1}，失败 {2}）。",
+                max(1, int(remaining)),
+                ok,
+                fail,
+            )
+
+        for index, user_id in enumerate(user_ids, start=1):
+            if stop.is_set():
+                break
+            try:
+                await transfer.reserve_send_slot(handle, BROADCAST_INTERVAL)
+                await retry_flood(
+                    lambda user_id=user_id: client.send_message(
+                        user_id, text, parse_mode=enums.ParseMode.DISABLED
+                    ),
+                    task=handle,
+                    stage=tr("等待广播限流解除"),
+                    status=status,
+                    notice=flood_notice,
+                )
+                ok += 1
+            except TaskCancelled:
+                break
+            except Exception as exc:
+                fail += 1
+                logger.warning("广播失败 user=%s type=%s", user_id, type(exc).__name__)
+            if index != total and index % BROADCAST_PROGRESS_EVERY == 0:
+                with contextlib.suppress(Exception):
+                    await status.edit(
+                        tr(
+                            "📣 广播进度：{0}/{1}，成功 {2}，失败 {3}",
+                            index,
+                            total,
+                            ok,
+                            fail,
+                        )
+                    )
         try:
-            await client.send_message(user_id, text)
-            ok += 1
-        except Exception:
-            fail += 1
-        await asyncio.sleep(0.1)  # 轻微限速，避免触发 flood
-
-    await status.edit(tr("✅ 广播完成：成功 {0}，失败 {1}", ok, fail))
+            if stop.is_set():
+                await status.edit(
+                    tr(
+                        "⏹ 广播已停止：成功 {0}，失败 {1}，未发送 {2}。",
+                        ok,
+                        fail,
+                        total - ok - fail,
+                    )
+                )
+            else:
+                await status.edit(tr("✅ 广播完成：成功 {0}，失败 {1}", ok, fail))
+        except Exception as exc:
+            logger.warning("广播结果通知失败 type=%s", type(exc).__name__)
+    finally:
+        _broadcast_stops.pop(uid, None)
 
 
 @bot.on_message(filters.command("me") & filters.private)

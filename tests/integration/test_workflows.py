@@ -728,3 +728,36 @@ def test_queue_advancing_before_notice_returns_does_not_create_an_extra_message(
         await ui.shutdown()
 
     asyncio.run(check())
+
+
+def test_corrupt_pending_logout_still_revokes_readable_sessions(monkeypatch):
+    from tgforward.storage.users import _PendingSessions
+
+    candidate = NS(log_out=AsyncMock(return_value=True))
+    monkeypatch.setattr(auth, "Client", lambda *a, **k: candidate)
+    monkeypatch.setattr(auth, "get_session", AsyncMock(return_value="active"))
+    monkeypatch.setattr(
+        auth, "get_pending_logouts", AsyncMock(return_value=_PendingSessions(["old"], 1))
+    )
+    monkeypatch.setattr(auth, "safe_connect_client", AsyncMock())
+    monkeypatch.setattr(auth, "_stop_quietly", AsyncMock())
+    monkeypatch.setattr(auth, "remove_session", AsyncMock(return_value=True))
+    monkeypatch.setattr(auth, "remove_user_client", AsyncMock())
+    monkeypatch.setattr(auth, "clear_logout_pending", AsyncMock(return_value=True))
+    status = NS(edit=AsyncMock())
+    asyncio.run(auth._logout_locked(1, status))
+    assert candidate.log_out.await_count == 2
+    auth.remove_session.assert_awaited_once()
+    assert "无法读取" in status.edit.call_args.args[0]
+
+
+def test_only_unreadable_pending_logout_does_not_claim_success(monkeypatch):
+    from tgforward.storage.users import _PendingSessions
+
+    monkeypatch.setattr(auth, "get_session", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        auth, "get_pending_logouts", AsyncMock(return_value=_PendingSessions([], 1))
+    )
+    status = NS(edit=AsyncMock())
+    asyncio.run(auth._logout_locked(1, status))
+    assert "没有可退出的会话" in status.edit.call_args.args[0]

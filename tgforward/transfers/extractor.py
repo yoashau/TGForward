@@ -376,7 +376,7 @@ async def extract_range(message, ref, count: int, task: Task | None = None) -> N
     status = TaskStatus.wrap(status, task)
     unit.status = status
     task.status = status
-    failed = skipped = success_count = 0
+    failed = skipped = success_count = uncertain = partial_count = 0
     try:
         user_client = await clients.get_user_client(uid)
         is_post = ref.comment_id is None
@@ -387,36 +387,47 @@ async def extract_range(message, ref, count: int, task: Task | None = None) -> N
 
         # 当前链接的局部计数；全局 task.current/success 由 task.advance() 单调累加，
         # 多链接共享同一 task 时不回退、不错配分母。
-        failed = skipped = success_count = 0
+        failed = skipped = success_count = uncertain = partial_count = 0
         task.reset_media(tr("本批内容"))
         task.media_scanning = True
-        prepared, prepared_groups = {}, {}
-        for offset in range(count):
-            task.check_cancel()
-            task.touch(tr("读取媒体清单"))
-            item_id = ref.message_id + offset
-            item = await fetch_message(uploader, user_client, ref, message_id=item_id, user_id=uid)
-            prepared[item_id] = item
-            if not item or getattr(item, "empty", False):
-                unit.message((ref.chat, item_id)).fail_source(tr("源消息未能读取或已删除"))
-                continue
-            gid = getattr(item, "media_group_id", None)
-            if gid:
-                group_key = (item.chat.id, gid)
-                if group_key not in prepared_groups:
-                    try:
-                        prepared_groups[group_key] = await transfer._fetch_media_group(
-                            getattr(item, "_client", None) or downloader, item
-                        )
-                    except transfer.SourceResolutionError as exc:
-                        unit.message(group_key).fail_source(str(exc))
-                        raise
-                members = prepared_groups[group_key]
-            else:
-                members = [item]
-            for member in members:
-                task.discover(member, ref.is_private)
-        task.media_scanning = False
+        prepared, prepared_groups, known_members = {}, {}, {}
+        try:
+            for offset in range(count):
+                task.check_cancel()
+                task.touch(tr("读取媒体清单"))
+                item_id = ref.message_id + offset
+                if item_id in known_members:
+                    # 相册清单已经包含该成员，不再逐条重复读取。
+                    prepared[item_id] = known_members[item_id]
+                    continue
+                item = await fetch_message(
+                    uploader, user_client, ref, message_id=item_id, user_id=uid
+                )
+                prepared[item_id] = item
+                if not item or getattr(item, "empty", False):
+                    unit.message((ref.chat, item_id)).fail_source(tr("源消息未能读取或已删除"))
+                    continue
+                gid = getattr(item, "media_group_id", None)
+                if gid:
+                    group_key = (item.chat.id, gid)
+                    if group_key not in prepared_groups:
+                        try:
+                            prepared_groups[group_key] = await transfer._fetch_media_group(
+                                getattr(item, "_client", None) or downloader, item
+                            )
+                        except transfer.SourceResolutionError as exc:
+                            unit.message(group_key).fail_source(str(exc))
+                            raise
+                    members = prepared_groups[group_key]
+                    for member in members:
+                        if ref.message_id <= member.id < ref.message_id + count:
+                            known_members[member.id] = member
+                else:
+                    members = [item]
+                for member in members:
+                    task.discover(member, ref.is_private)
+        finally:
+            task.media_scanning = False
 
         # 批量只在全部输入明确指向同一个原帖/相册时提供一个手动入口。
         post_keys = {
@@ -429,15 +440,20 @@ async def extract_range(message, ref, count: int, task: Task | None = None) -> N
         )
         group_results = {}  # 相册成功、失败及未尝试成员的真实结果，而非“见过即成功”。
         last_error = ""
+        # 一条都读不到才提示登录。中间的空缺可能只是已删除，不能因此放弃已读到的后续消息。
+        if (
+            ref.is_private
+            and user_client is None
+            and not any(item and not getattr(item, "empty", False) for item in prepared.values())
+        ):
+            await status.finish(tr(LOGIN_REQUIRED_TEXT), "failed")
+            return
         for j in range(count):
             task.check_cancel()
             task.touch(tr("获取消息"))
             mid = ref.message_id + j
             msg = prepared.get(mid)
             if not msg or getattr(msg, "empty", False):
-                if ref.is_private and user_client is None:
-                    await status.finish(tr(LOGIN_REQUIRED_TEXT), "failed")
-                    return
                 skipped += 1
                 task.advance()
                 continue
@@ -445,7 +461,8 @@ async def extract_range(message, ref, count: int, task: Task | None = None) -> N
             group_key = (msg.chat.id, gid) if gid else None
             members = prepared_groups.get(group_key) or [msg]
             result_key = task.media_key(msg)
-            if group_key and group_key in group_results:
+            reused_group = bool(group_key and group_key in group_results)
+            if reused_group:
                 result = group_results[group_key][result_key]
             else:
                 complete = False
@@ -491,16 +508,29 @@ async def extract_range(message, ref, count: int, task: Task | None = None) -> N
                 success_count += 1
             elif result == "failed":
                 failed += 1
+            elif result == "uncertain":
+                uncertain += 1
+            elif result == "partial":
+                partial_count += 1
             else:
                 skipped += 1
             with suppress(Exception):
                 await status.edit(_progress_text(j + 1, count, success_count, failed))
-            if j + 1 < count:
+            # 同一相册只发送一次；已计入结果的后续成员不再额外等待。
+            if j + 1 < count and not reused_group:
                 await task.wait_or_cancel(BATCH_DELAY, tr("批量提取间隔"))
 
         summary = tr("✅ 批量提取完成！成功 {0}/{1}", success_count, count)
         if skipped:
             summary += tr("\n⏭️ 未发送或已删除 {0} 条。", skipped)
+        if partial_count:
+            summary += tr("\n部分发送 {0} 条。", partial_count)
+        if uncertain:
+            summary += tr("\n发送结果无法确认 {0} 条。", uncertain)
+        if skipped and ref.is_private and user_client is None:
+            summary += tr(
+                "\n未能读取的私有消息已跳过。若机器人无法访问该频道，请登录账号后重试。"
+            )
         if failed:
             summary += tr("\n⚠️ 失败 {0} 条，最后错误：{1}", failed, last_error[:80])
         elif last_error:
@@ -509,7 +539,11 @@ async def extract_range(message, ref, count: int, task: Task | None = None) -> N
             summary += tr("\n\n💬 评论提取\n") + unit.comments_summary()
         await status.finish(
             summary,
-            "partial" if failed or success_count < count else "success",
+            "uncertain"
+            if uncertain
+            else "partial"
+            if failed or partial_count or success_count < count
+            else "success",
         )
     except asyncio.CancelledError:
         with suppress(Exception):

@@ -388,6 +388,67 @@ def test_comment_limit_is_not_silent(monkeypatch):
     assert len(messages) == 2 and truncated
 
 
+def test_zero_id_placeholder_does_not_restart_comment_page(monkeypatch):
+    from tgforward.comments import discussion
+
+    root = NS(id=1000, chat=NS(id=-1009))
+    pages = [
+        NS(messages=[NS(id=0), *[NS(id=i) for i in range(200, 101, -1)]], users=[], chats=[]),
+        NS(messages=[], users=[], chats=[]),
+    ]
+    calls = []
+
+    async def invoke(request):
+        calls.append(request.offset_id)
+        return pages[len(calls) - 1]
+
+    c = NS(invoke=AsyncMock(side_effect=invoke))
+    monkeypatch.setattr(
+        discussion,
+        "resolve_root",
+        AsyncMock(
+            return_value=discussion.ThreadRoot(root.chat.id, root.id, "peer", frozenset({root.id}))
+        ),
+    )
+
+    async def parse(_, m, *a, **kw):
+        return NS(id=m.id, chat=root.chat, empty=m.id <= 0, media_group_id=None)
+
+    monkeypatch.setattr(discussion.Message, "_parse", parse)
+    messages, truncated = run(discussion.collect(c, "c", 1))
+    assert calls == [0, 102]
+    assert [m.id for m in messages] == list(range(102, 201))
+    assert not truncated
+
+
+def test_comment_scan_cap_stops_endless_filtered_pages(monkeypatch):
+    from tgforward.comments import discussion
+
+    monkeypatch.setattr(discussion, "MAX_COMMENT_PAGES", 2)
+    root = NS(id=1000, chat=NS(id=-1009))
+
+    async def invoke(request):
+        start = 10000 - request.offset_id
+        return NS(
+            messages=[NS(id=start - i, action="join") for i in range(100)],
+            users=[],
+            chats=[],
+        )
+
+    c = NS(invoke=AsyncMock(side_effect=invoke))
+    monkeypatch.setattr(
+        discussion,
+        "resolve_root",
+        AsyncMock(
+            return_value=discussion.ThreadRoot(root.chat.id, root.id, "peer", frozenset({root.id}))
+        ),
+    )
+    with pytest.raises(discussion.transfer.TransferError, match="扫描上限"):
+        run(discussion.collect(c, "c", 1))
+    assert c.invoke.await_count == 2
+
+
+
 @pytest.mark.parametrize("album", [False, True])
 def test_empty_copy_result_does_not_report_success(monkeypatch, album):
     from tests.transfers.test_routing import FakeDownloader, FakeUploader, _media_message

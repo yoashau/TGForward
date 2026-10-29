@@ -188,15 +188,15 @@ class TaskStatus:
                 delivered = sum(len(r.delivery.confirmed_delivered) for r in results)
                 total = sum(r.delivery.total_parts for r in results)
                 if outcome in ("incomplete", "uncertain"):
-                    text += (
-                        tr(
+                    # 只有已经送达或结果不明时，重试才可能重复。确认失败可以安全重试。
+                    if total and (outcome == "uncertain" or delivered):
+                        text += tr(
                             "\n已确认发送 {0}/{1} 部分。重新提取可能造成重复发送。",
                             delivered,
                             total,
                         )
-                        if total
-                        else tr("\n尚未完成源消息解析。")
-                    )
+                    elif not total:
+                        text += tr("\n尚未完成源消息解析。")
                 if self.task.comment_result is not None and tr("💬 评论提取") not in text:
                     text += tr("\n\n💬 评论提取\n") + (
                         unit.comments_summary() or self.task.comment_result.summary()

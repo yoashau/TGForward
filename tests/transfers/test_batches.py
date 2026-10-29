@@ -142,3 +142,136 @@ def test_multilink_second_link_partial_failure_keeps_local_counts(monkeypatch):
     assert any("已成功 1" in t for t in progress)
     # 第一批不受影响，全部成功。
     assert "成功 2/2" in _final(e1)[0]
+
+
+def test_private_gap_does_not_abort_readable_messages(monkeypatch):
+    messages = {1: _media_msg(-100777, 1), 3: _media_msg(-100777, 3)}
+    fetched = []
+
+    async def fetch(uploader, user_client, ref, message_id=None, user_id=None):
+        fetched.append(message_id)
+        return messages.get(message_id)
+
+    sent = []
+
+    async def transfer_message(uploader, downloader, msg, *args, **kwargs):
+        sent.append(msg.id)
+        return TransferDescription("完成：图片")
+
+    monkeypatch.setattr(extractor, "fetch_message", fetch)
+    monkeypatch.setattr(extractor.clients, "get_user_client", AsyncMock(return_value=None))
+    monkeypatch.setattr(extractor.clients, "get_upload_bot", AsyncMock(return_value=NS()))
+    monkeypatch.setattr(extractor, "load_user_settings", AsyncMock(return_value=UserSettings(1)))
+    monkeypatch.setattr(extractor, "_comment_metadata", AsyncMock(return_value=None))
+    monkeypatch.setattr(extractor, "record_extract_success", AsyncMock())
+    monkeypatch.setattr(extractor.transfer, "transfer_message", transfer_message)
+    status, edits = _make_status()
+    request = NS(from_user=NS(id=1), chat=NS(id=1), reply=AsyncMock(return_value=status))
+    task = tasks.Task(1, "batch", 3)
+
+    asyncio.run(extractor.extract_range(request, MessageLink("-100777", 1, True), 3, task))
+
+    assert sent == [1, 3]
+    assert task.success == 2 and task.current == 3
+    final = _final(edits)[0]
+    assert "成功 2/3" in final
+    assert "未发送或已删除 1 条" in final
+    assert "登录账号后重试" in final
+    assert "需要先登录" not in final
+
+
+def test_private_batch_with_nothing_readable_asks_for_login(monkeypatch):
+    async def fetch(*args, **kwargs):
+        return None
+
+    sent = AsyncMock()
+    monkeypatch.setattr(extractor, "fetch_message", fetch)
+    monkeypatch.setattr(extractor.clients, "get_user_client", AsyncMock(return_value=None))
+    monkeypatch.setattr(extractor.clients, "get_upload_bot", AsyncMock(return_value=NS()))
+    monkeypatch.setattr(extractor, "load_user_settings", AsyncMock(return_value=UserSettings(1)))
+    monkeypatch.setattr(extractor.transfer, "transfer_message", sent)
+    status, edits = _make_status()
+    request = NS(from_user=NS(id=1), chat=NS(id=1), reply=AsyncMock(return_value=status))
+
+    asyncio.run(
+        extractor.extract_range(
+            request, MessageLink("-100777", 5, True), 3, tasks.Task(1, "batch", 3)
+        )
+    )
+
+    sent.assert_not_awaited()
+    assert "需要先登录" in _final(edits)[0]
+
+
+def test_album_manifest_is_not_fetched_or_delayed_per_member(monkeypatch):
+    group = []
+    for mid in (1, 2, 3):
+        item = _media_msg(-100777, mid)
+        item.media_group_id = "album"
+        group.append(item)
+    fetched = []
+
+    async def fetch(uploader, user_client, ref, message_id=None, user_id=None):
+        fetched.append(message_id)
+        return next(item for item in group if item.id == message_id)
+
+    waits = []
+
+    async def transfer_message(*args, **kwargs):
+        return TransferDescription("完成：相册", last_message_id=3)
+
+    monkeypatch.setattr(extractor, "fetch_message", fetch)
+    monkeypatch.setattr(extractor.transfer, "_fetch_media_group", AsyncMock(return_value=group))
+    monkeypatch.setattr(extractor.clients, "get_user_client", AsyncMock(return_value=NS()))
+    monkeypatch.setattr(extractor.clients, "get_upload_bot", AsyncMock(return_value=NS()))
+    monkeypatch.setattr(extractor, "load_user_settings", AsyncMock(return_value=UserSettings(1)))
+    monkeypatch.setattr(extractor, "_comment_metadata", AsyncMock(return_value=None))
+    monkeypatch.setattr(extractor, "record_extract_success", AsyncMock())
+    monkeypatch.setattr(extractor.transfer, "transfer_message", transfer_message)
+    monkeypatch.setattr(extractor, "BATCH_DELAY", 3)
+    status, _edits = _make_status()
+    request = NS(from_user=NS(id=1), chat=NS(id=1), reply=AsyncMock(return_value=status))
+    task = tasks.Task(1, "batch", 3)
+
+    async def wait(seconds, stage=None):
+        waits.append(seconds)
+
+    task.wait_or_cancel = wait
+    asyncio.run(extractor.extract_range(request, MessageLink("-100777", 1, True), 3, task))
+    assert fetched == [1]
+    assert waits == [3]
+    assert task.success == 3
+
+
+def test_uncertain_album_member_is_not_reported_as_unsent(monkeypatch):
+    from tgforward.transfers.results import DeliveryPart
+
+    item = _media_msg(-100777, 8)
+
+    async def fetch(uploader, user_client, ref, message_id=None, user_id=None):
+        return item if message_id == 8 else None
+
+    async def transfer_message(uploader, downloader, msg, *args, task=None, **kwargs):
+        result = task.active_unit.message((msg.chat.id, msg.id))
+        result.resolve_source([msg.id], [DeliveryPart(f"media:{msg.id}", msg.id)])
+        result.delivery.begin_attempt(f"media:{msg.id}")
+        result.delivery.mark_uncertain(f"media:{msg.id}", "lost response")
+        raise extractor.TransferError("发送结果无法确认")
+
+    monkeypatch.setattr(extractor, "fetch_message", fetch)
+    monkeypatch.setattr(extractor.clients, "get_user_client", AsyncMock(return_value=NS()))
+    monkeypatch.setattr(extractor.clients, "get_upload_bot", AsyncMock(return_value=NS()))
+    monkeypatch.setattr(extractor, "load_user_settings", AsyncMock(return_value=UserSettings(1)))
+    monkeypatch.setattr(extractor, "_comment_metadata", AsyncMock(return_value=None))
+    monkeypatch.setattr(extractor.transfer, "transfer_message", transfer_message)
+    status, edits = _make_status()
+    request = NS(from_user=NS(id=1), chat=NS(id=1), reply=AsyncMock(return_value=status))
+
+    asyncio.run(
+        extractor.extract_range(
+            request, MessageLink("-100777", 8, True), 1, task=tasks.Task(1, "batch", 1)
+        )
+    )
+    final = _final(edits)[0]
+    assert "发送结果无法确认 1 条" in final
+    assert "未发送或已删除" not in final

@@ -11,9 +11,13 @@ from tgforward.ui.interaction import interaction
 
 
 async def _cancel(uid):
+    from tgforward.handlers.admin import stop_broadcast
+
     cleared = []
     task = tasks.get(uid)
     stopped = tasks.request_cancel(uid)
+    if stop_broadcast(uid):
+        cleared.append(tr("广播"))
     if await dialogue.clear(uid):
         cleared.append(tr("填写操作"))
     if stopped:

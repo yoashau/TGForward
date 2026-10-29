@@ -1,7 +1,13 @@
 import os
+from pathlib import Path
 from types import SimpleNamespace
 
-from tgforward.utils.files import apply_name_rules, media_filename, sanitize_filename
+from tgforward.utils.files import (
+    apply_name_rules,
+    media_filename,
+    processed_name,
+    sanitize_filename,
+)
 
 
 class TestSanitizeFilename:
@@ -70,3 +76,39 @@ class TestApplyNameRules:
         )
         assert out == str(tmp_path / "b (1).txt")
         assert (tmp_path / "b.txt").read_bytes() == b"y"
+
+
+def test_long_name_keeps_tag_and_extension():
+    name = processed_name("x" * 240 + ".mp4", [], {}, rename_tag="@watermark")
+    assert len(name.encode()) <= 250
+    assert name.endswith(" @watermark.mp4")
+
+
+def test_deleted_stem_keeps_tag_as_suffix(tmp_path):
+    source = tmp_path / "SPAM.pdf"
+    source.write_bytes(b"x")
+    out = apply_name_rules(str(source), delete_words=["SPAM"], replacements={}, rename_tag="@me")
+    assert os.path.basename(out) == "file @me.pdf"
+
+
+def test_collision_on_long_tagged_name_keeps_tag_and_counter(tmp_path):
+    source = tmp_path / ("n" * 220 + ".mkv")
+    source.write_bytes(b"new")
+    tagged = processed_name(source.name, [], {}, "@watermark")
+    occupied = tmp_path / tagged
+    occupied.write_bytes(b"old")
+    out = apply_name_rules(str(source), [], {}, "@watermark")
+    base = os.path.basename(out)
+    assert len(base.encode()) <= 250
+    assert base.endswith(" @watermark (1).mkv")
+    assert occupied.read_bytes() == b"old"
+    assert Path(out).read_bytes() == b"new"
+
+
+def test_pathological_suffix_cannot_exceed_byte_budget():
+    from tgforward.utils.files import _fit_name
+
+    name = _fit_name("stem", ".mp4", " (" + "9" * 400 + ")")
+    assert len(name.encode()) <= 250
+    assert name.endswith(".mp4")
+    assert name != _fit_name("stem", ".mp4", " (" + "8" * 400 + ")")

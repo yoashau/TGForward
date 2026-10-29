@@ -405,11 +405,29 @@ async def clear_logout_pending(user_id, session_string):
     return await unset_field(user_id, f"pending_logouts.{_logout_key(session_string)}")
 
 
+class _PendingSessions(list):
+    """可读的待撤销会话；unreadable 不因单条坏记录阻断其余退出。"""
+
+    def __init__(self, sessions, unreadable=0):
+        super().__init__(sessions)
+        self.unreadable = unreadable
+
+
 async def get_pending_logouts(user_id):
     doc = await storage.get_user(int(user_id)) or {}
-    return [
-        decrypt(entry["session_string"]) for entry in (doc.get("pending_logouts") or {}).values()
-    ]
+    sessions = []
+    unreadable = 0
+    for entry in (doc.get("pending_logouts") or {}).values():
+        stored = entry.get("session_string") if isinstance(entry, dict) else None
+        if not isinstance(stored, str) or not stored:
+            unreadable += 1
+            continue
+        try:
+            sessions.append(decrypt(stored))
+        except Exception:
+            unreadable += 1
+            logger.error("待撤销会话无法解密 user=%s", user_id)
+    return _PendingSessions(sessions, unreadable)
 
 
 def _set_path(doc, key, value):

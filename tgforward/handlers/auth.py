@@ -267,9 +267,13 @@ async def _logout_locked(uid, status_msg):
     except Exception:
         await _edit(status_msg, tr("❌ 待重试记录读取失败，请稍后重新 /logout。"))
         return
-    sessions = list(dict.fromkeys(([session_string] if session_string else []) + pending))
+    unreadable = getattr(pending, "unreadable", 0)
+    sessions = list(dict.fromkeys(([session_string] if session_string else []) + list(pending)))
     if not sessions:
-        await _edit(status_msg, tr("❌ 未找到登录会话，你可能尚未登录。"))
+        if unreadable:
+            await _edit(status_msg, tr("auth.pending_unreadable"))
+        else:
+            await _edit(status_msg, tr("❌ 未找到登录会话，你可能尚未登录。"))
         return
 
     remote_failed = False
@@ -307,13 +311,11 @@ async def _logout_locked(uid, status_msg):
         return
     await remove_user_client(uid)
     if remote_failed:
-        await _edit(
-            status_msg,
-            tr("auth.revocation_pending"),
-        )
+        text = tr("auth.revocation_pending")
     elif tracking_failed:
-        await _edit(
-            status_msg, tr("⚠️ 本地已退出、远端授权已撤销，但重试记录清理失败，请重新 /logout。")
-        )
+        text = tr("⚠️ 本地已退出、远端授权已撤销，但重试记录清理失败，请重新 /logout。")
     else:
-        await _edit(status_msg, tr("✅ 已成功退出登录，远端授权已撤销！"))
+        text = tr("✅ 已成功退出登录，远端授权已撤销！")
+    if unreadable:
+        text += tr("auth.pending_unreadable_suffix", unreadable)
+    await _edit(status_msg, text)

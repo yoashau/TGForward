@@ -19,6 +19,9 @@ from tgforward.ui.i18n import tr
 
 logger = logging.getLogger(__name__)
 MAX_REPLIES = 1000
+PAGE_SIZE = 100
+# 正常 1000 条远早于该页数结束；只拦住服务消息或坏游标造成的空转。
+MAX_COMMENT_PAGES = 50
 
 
 @dataclass
@@ -228,7 +231,11 @@ async def _collect(client, chat_ref, message_id, task=None):
     offset = 0
     seen = set()
     result = []
+    pages = 0
     while True:
+        pages += 1
+        if pages > MAX_COMMENT_PAGES:
+            raise transfer.TransferError(tr("评论分页超过扫描上限，未报告为完整成功。"))
         if task:
             task.check_cancel()
             task.touch(tr("读取评论区"))
@@ -240,7 +247,7 @@ async def _collect(client, chat_ref, message_id, task=None):
                     offset_id=offset,
                     offset_date=0,
                     add_offset=0,
-                    limit=100,
+                    limit=PAGE_SIZE,
                     max_id=0,
                     min_id=0,
                     hash=0,
@@ -279,11 +286,19 @@ async def _collect(client, chat_ref, message_id, task=None):
                 if gid:
                     trimmed = [m for m in trimmed if getattr(m, "media_group_id", None) != gid]
                 return sorted(trimmed, key=lambda m: m.id), True
-        oldest = min(m.id for m in messages)
+        # id<=0 的空占位不能当游标，否则下一页会从最新消息重新开始。
+        positive = [
+            m.id for m in messages if isinstance(getattr(m, "id", None), int) and m.id > 0
+        ]
+        if not positive:
+            if len(messages) >= PAGE_SIZE:
+                raise transfer.TransferError(tr("评论分页游标异常，请重试。"))
+            return sorted(result, key=lambda m: m.id), False
+        oldest = min(positive)
         if offset and oldest >= offset:
             raise transfer.TransferError(tr("评论分页游标异常，请重试。"))
         offset = oldest
-        if len(messages) < 100:
+        if len(messages) < PAGE_SIZE:
             return sorted(result, key=lambda m: m.id), False
 
 

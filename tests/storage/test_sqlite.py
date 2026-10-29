@@ -442,3 +442,23 @@ os._exit(17)
     asyncio.run(sqlite_store.close())
     asyncio.run(sqlite_store.initialize())
     assert asyncio.run(users.get_field(42, "caption")) == ("after" if commit else "before")
+
+
+def test_one_corrupt_pending_logout_does_not_hide_the_rest(sqlite_store):
+    async def check():
+        await sqlite_store.mutate_user(
+            7,
+            lambda doc: doc.update(
+                user_id=7,
+                pending_logouts={
+                    "good": {"session_string": encrypt("readable"), "error": "network"},
+                    "bad": {"session_string": "v1:not-valid-ciphertext", "error": "old"},
+                    "empty": {},
+                },
+            ),
+        )
+        pending = await users.get_pending_logouts(7)
+        assert list(pending) == ["readable"]
+        assert pending.unreadable == 2
+
+    asyncio.run(check())

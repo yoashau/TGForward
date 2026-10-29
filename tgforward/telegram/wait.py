@@ -88,10 +88,14 @@ async def acquire(resource, task=None, stage="等待传输资源"):
             resource.release()
 
 
-async def retry_flood(make_call, task=None, stage="等待 Telegram 限流解除"):
+async def retry_flood(
+    make_call, task=None, stage="等待 Telegram 限流解除", *, status=None, notice=None
+):
     while True:
         touch(task, stage)
         try:
             return await make_call()
         except FloodWait as exc:
-            await heartbeat_sleep(max(0, exc.value) + 1, task, stage)
+            await heartbeat_sleep(
+                max(0, exc.value) + 1, task, stage, status=status, notice=notice
+            )

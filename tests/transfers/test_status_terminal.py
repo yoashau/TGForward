@@ -201,3 +201,25 @@ def test_detached_unit_cannot_render_into_next_unit():
         assert status.terminal_outcome == "stopped"
 
     asyncio.run(run())
+
+
+def test_confirmed_failure_does_not_claim_retry_would_duplicate():
+    from tgforward.transfers.results import DeliveryPart
+
+    async def run():
+        task = Task(981, "single", 1)
+        task.active_unit = task.extraction_unit("input")
+        result = task.active_unit.message((5, 1))
+        result.resolve_source([1], [DeliveryPart("media:1", 1)])
+        result.delivery.begin_attempt("media:1")
+        result.delivery.reject("media:1", "server rejected")
+        result.delivery.finalize_failed("media:1")
+        task.advance()
+        message = NS(edit=AsyncMock())
+        status = TaskStatus(message, task)
+        await status.finish("发送失败", "failed")
+        text = message.edit.call_args.args[0]
+        assert "重复" not in text
+        assert status.terminal_outcome == "failed"
+
+    asyncio.run(run())

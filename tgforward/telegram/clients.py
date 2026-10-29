@@ -27,8 +27,12 @@ _STARTED_AT = time.monotonic()
 
 def uptime_text() -> str:
     """进程运行时长（供 /status 使用）。"""
+    from tgforward.ui.i18n import tr
+
     seconds = int(time.monotonic() - _STARTED_AT)
-    return f"{seconds // 3600}小时{(seconds % 3600) // 60}分{seconds % 60}秒"
+    hours, remainder = divmod(seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return tr("{0}小时{1}分{2}秒", hours, minutes, secs)
 
 
 def _client(name: str, **kwargs) -> Client:

@@ -105,7 +105,7 @@ class TransferDescription:
     """发送内容的展示信息；不包含业务成功判定。"""
 
     summary: str
-    # 相册最后一个成员的消息 ID：批量提取时用于整组跳号，避免逐条重复取消息
+    # 相册末条消息 ID。批量提取用已读清单跳过重复拉取，不把请求数量改成按帖跳号。
     last_message_id: int | None = None
     sent_message: object | None = None
 
@@ -184,6 +184,17 @@ async def _delete_quietly(message) -> None:
         await message.delete()
 
 
+
+async def reserve_send_slot(task=None, interval=None):
+    """预订下一次发送时刻。广播与搬运共享同一节奏，避免同时打满 Bot 限额。"""
+    global _last_send_at
+    gap = _MIN_SEND_INTERVAL if interval is None else max(_MIN_SEND_INTERVAL, interval)
+    async with acquire(_send_lock, task, tr("等待发送时隙")):
+        slot = max(time.monotonic(), _last_send_at + gap)
+        _last_send_at = slot
+    await heartbeat_sleep(slot - time.monotonic(), task, tr("等待发送时隙"))
+
+
 async def _send(
     make_call,
     task: Task | None = None,
@@ -201,17 +212,13 @@ async def _send(
     `make_call` 是可重复调用的零参函数（通常为 functools.partial），
     每次调用返回新的 awaitable。
     """
-    global _last_send_at
     active = _current_result.get()
     if state is None and active is not None and role == SideEffectRole.FINAL_DELIVERY:
         state = active.delivery
 
     while True:
         # 只在锁内预订发送时隙；RPC 和 FloodWait 都在锁外执行。
-        async with acquire(_send_lock, task, tr("等待发送时隙")):
-            slot = max(time.monotonic(), _last_send_at + _MIN_SEND_INTERVAL)
-            _last_send_at = slot
-        await heartbeat_sleep(slot - time.monotonic(), task, tr("等待发送时隙"))
+        await reserve_send_slot(task)
         try:
             # 返回后先由业务层提交已送达状态，不在提交之前抛协作式取消。
             if task is not None:
@@ -560,7 +567,10 @@ def _mark_failed(task, members):
 
 
 def member_results(members, task, *, complete=False):
-    """返回源消息键 -> sent/failed/skipped；整段异常且无细分记录时按整段失败。"""
+    """返回源消息键 -> sent/failed/partial/uncertain/skipped。
+
+    整段异常且没有细分记录时按整段失败。部分送达和结果不明不能记成未发送。
+    """
     for unit in reversed(task.units):
         source_key = (
             members[0].chat.id,
@@ -570,9 +580,12 @@ def member_results(members, task, *, complete=False):
         if result is not None:
             projected = result.source_outcomes()
             return {
-                Task.media_key(m): {"success": "sent", "failed": "failed"}.get(
-                    projected.get(m.id), "skipped"
-                )
+                Task.media_key(m): {
+                    "success": "sent",
+                    "failed": "failed",
+                    "partial": "partial",
+                    "uncertain": "uncertain",
+                }.get(projected.get(m.id), "skipped")
                 for m in members
             }
     keys = [Task.media_key(m) for m in members]
