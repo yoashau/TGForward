@@ -287,9 +287,7 @@ async def _collect(client, chat_ref, message_id, task=None):
                     trimmed = [m for m in trimmed if getattr(m, "media_group_id", None) != gid]
                 return sorted(trimmed, key=lambda m: m.id), True
         # id<=0 的空占位不能当游标，否则下一页会从最新消息重新开始。
-        positive = [
-            m.id for m in messages if isinstance(getattr(m, "id", None), int) and m.id > 0
-        ]
+        positive = [m.id for m in messages if isinstance(getattr(m, "id", None), int) and m.id > 0]
         if not positive:
             if len(messages) >= PAGE_SIZE:
                 raise transfer.TransferError(tr("评论分页游标异常，请重试。"))

@@ -8,6 +8,7 @@ import asyncio
 import logging
 import time
 from collections import OrderedDict
+from collections.abc import Callable
 from contextlib import contextmanager, suppress
 from contextvars import copy_context
 from dataclasses import dataclass, field
@@ -309,6 +310,7 @@ class QueuedRequest:
     messages: object | None = field(default=None, repr=False)
     notice: object | None = field(default=None, repr=False)
     cancelled: bool = False
+    on_remove: Callable[[], None] | None = field(default=None, repr=False)
 
 
 _queues: dict[int, OrderedDict[str, QueuedRequest]] = {}
@@ -376,6 +378,8 @@ def _release_requests(requests):
     messages = Messages()
     for request in requests:
         request.cancelled = True
+        if request.on_remove is not None:
+            request.on_remove()
         if request.messages is not None:
             for message in list(request.messages.items.values()):
                 messages.add(message)

@@ -528,9 +528,7 @@ async def extract_range(message, ref, count: int, task: Task | None = None) -> N
         if uncertain:
             summary += tr("\n发送结果无法确认 {0} 条。", uncertain)
         if skipped and ref.is_private and user_client is None:
-            summary += tr(
-                "\n未能读取的私有消息已跳过。若机器人无法访问该频道，请登录账号后重试。"
-            )
+            summary += tr("\n未能读取的私有消息已跳过。若机器人无法访问该频道，请登录账号后重试。")
         if failed:
             summary += tr("\n⚠️ 失败 {0} 条，最后错误：{1}", failed, last_error[:80])
         elif last_error:

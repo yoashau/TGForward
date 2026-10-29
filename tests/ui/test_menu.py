@@ -52,6 +52,7 @@ def isolate(monkeypatch):
     monkeypatch.setattr(settings, "toggle_auto_comments", AsyncMock(return_value=True))
     monkeypatch.setattr(settings, "reset_settings", AsyncMock(return_value=True))
     monkeypatch.setattr(settings, "remove_custom_thumb", lambda _: "removed")
+    monkeypatch.setattr(settings, "custom_thumb_path", lambda _: None)
     yield
     state._states.clear()
 
@@ -163,6 +164,58 @@ def test_setting_success_keeps_back_and_close():
         value.reply.assert_not_awaited()
         assert buttons(m) == ["set:page:content", "nav:close"]
         assert "已设置" in m.edit.call_args.args[0]
+        await ui.shutdown()
+
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize(
+    "action,field,value,parent",
+    [
+        ("clearchat", "chat_id", "", "nav:home"),
+        ("clearrename", "rename_tag", "", "set:page:home"),
+        ("clearcaption", "caption", "", "set:page:home"),
+        ("clearreplacement", "replacement_words", {}, "set:page:home"),
+        ("cleardeleteword", "delete_words", [], "set:page:home"),
+    ],
+)
+def test_setting_can_clear_one_value_without_resetting_others(action, field, value, parent):
+    m = msg()
+
+    async def check():
+        await settings.settings_callback(None, query(m, "set:" + action))
+        settings.set_field.assert_awaited_once_with(1, field, value)
+        assert parent in buttons(m)
+        assert "已清除" in m.edit.call_args.args[0]
+        await ui.shutdown()
+
+    asyncio.run(check())
+
+
+def test_expired_setting_button_keeps_current_input():
+    m = msg()
+    current = state.set(1, "settings", "rename")
+
+    async def check():
+        q = query(m, "set:outdated")
+        await settings.settings_callback(None, q)
+        assert state.get(1) is current
+        settings.set_field.assert_not_awaited()
+        assert "失效" in q.answer.call_args.args[0]
+        await ui.shutdown()
+
+    asyncio.run(check())
+
+
+def test_expired_navigation_button_keeps_current_input():
+    m = msg()
+    current = state.set(1, "settings", "rename")
+
+    async def check():
+        q = query(m, "nav:outdated")
+        await menu.navigate(None, q)
+        assert state.get(1) is current
+        assert "不可用" in q.answer.call_args.args[0]
         await ui.shutdown()
 
     asyncio.run(check())

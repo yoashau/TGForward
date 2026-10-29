@@ -105,10 +105,11 @@ def _group_recently_handled(uid: int, gid: str | None) -> bool:
     return time.monotonic() < expiry
 
 
-def _mark_group_handled(uid: int, gid: str | None) -> None:
+def _mark_group_handled(uid: int, gid: str | None) -> float | None:
     if not gid:
-        return
-    _recent_groups.setdefault(uid, {})[gid] = time.monotonic() + _GROUP_TTL
+        return None
+    expiry = time.monotonic() + _GROUP_TTL
+    _recent_groups.setdefault(uid, {})[gid] = expiry
     while sum(map(len, _recent_groups.values())) > _GROUP_CAPACITY:
         oldest_uid, oldest_gid = min(
             ((u, g) for u, entry in _recent_groups.items() for g in entry),
@@ -118,6 +119,15 @@ def _mark_group_handled(uid: int, gid: str | None) -> None:
         if not _recent_groups[oldest_uid]:
             _recent_groups.pop(oldest_uid)
     _schedule_group_expiry()
+    return expiry
+
+
+def _unmark_group_handled(uid: int, gid: str, expiry: float) -> None:
+    groups = _recent_groups.get(uid)
+    if groups is not None and groups.get(gid) == expiry:
+        groups.pop(gid, None)
+        if not groups:
+            _recent_groups.pop(uid, None)
 
 
 def _deduplicate_plan(plan, message):
@@ -212,7 +222,9 @@ async def smart_router(client, message):
     except lifecycle.StalePermit:
         return
 
-    _mark_group_handled(uid, gid)
+    expiry = _mark_group_handled(uid, gid)
+    if position and gid:
+        request.on_remove = lambda: _unmark_group_handled(uid, gid, expiry)
     if position:
         request.notice = await message.reply(
             tr("tasks.queued", position, total),

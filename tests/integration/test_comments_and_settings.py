@@ -448,7 +448,6 @@ def test_comment_scan_cap_stops_endless_filtered_pages(monkeypatch):
     assert c.invoke.await_count == 2
 
 
-
 @pytest.mark.parametrize("album", [False, True])
 def test_empty_copy_result_does_not_report_success(monkeypatch, album):
     from tests.transfers.test_routing import FakeDownloader, FakeUploader, _media_message

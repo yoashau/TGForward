@@ -36,7 +36,7 @@ A Telegram message extraction bot. Send a message link to copy text, photos, vid
 | `/allow`, `/ban`, `/whitelist` | Manage the allowlist (administrators) |
 | `/status`, `/broadcast` | View service status or send a broadcast (administrators) |
 
-Private sources and discussion threads require a signed-in account with access. Public media is copied directly; private media is downloaded and uploaded. Filename and thumbnail settings apply to downloaded-and-uploaded files. Use a chat ID as the destination, or `chat_id/topic_id` for a topic.
+Private sources and discussion threads require a signed-in account with access. Public media is copied directly; private media is downloaded and uploaded. Filename and thumbnail settings apply to downloaded-and-uploaded files. Destinations accept a user ID after that user sends `/start` to the sending bot, or a group or channel `-100` ID. Use `-100groupID/topicID` for a topic. You can clear destinations, captions, and filename rules individually in Extraction settings.
 
 ### Interface language
 

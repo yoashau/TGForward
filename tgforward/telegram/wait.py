@@ -96,6 +96,4 @@ async def retry_flood(
         try:
             return await make_call()
         except FloodWait as exc:
-            await heartbeat_sleep(
-                max(0, exc.value) + 1, task, stage, status=status, notice=notice
-            )
+            await heartbeat_sleep(max(0, exc.value) + 1, task, stage, status=status, notice=notice)

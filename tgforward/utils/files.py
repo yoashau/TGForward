@@ -1,6 +1,7 @@
 """按 UTF-8 字节预算处理文件名，保留扩展名、标签和冲突后缀。"""
 
 import logging
+import mimetypes
 import os
 import re
 import time
@@ -64,7 +65,30 @@ def media_filename(message, fallback_ts: float | None = None) -> str:
     if name:
         return sanitize_filename(name)
     stamp = str(time.time() if fallback_ts is None else fallback_ts)
-    return stamp + ".jpg" if getattr(message, "photo", None) else stamp
+    if getattr(message, "photo", None):
+        return stamp + ".jpg"
+    sticker = getattr(message, "sticker", None)
+    if sticker:
+        extension = ".webp"
+        if getattr(sticker, "is_animated", False):
+            extension = ".tgs"
+        elif getattr(sticker, "is_video", False):
+            extension = ".webm"
+        return stamp + extension
+    for kind, default in (
+        ("video", ".mp4"),
+        ("audio", ".mp3"),
+        ("voice", ".ogg"),
+        ("video_note", ".mp4"),
+        ("animation", ".mp4"),
+        ("document", ".bin"),
+    ):
+        media = getattr(message, kind, None)
+        if media:
+            mime_type = getattr(media, "mime_type", None)
+            extension = mimetypes.guess_extension(mime_type) if mime_type else None
+            return stamp + (extension or default)
+    return stamp
 
 
 def _ruled_parts(name, delete_words, replacements, rename_tag=""):

@@ -2,6 +2,8 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from tgforward.utils.files import (
     apply_name_rules,
     media_filename,
@@ -36,8 +38,33 @@ class TestMediaFilename:
         m = self._msg(photo=object())
         assert media_filename(m, 123.4) == "123.4.jpg"
 
+    @pytest.mark.parametrize(
+        "kind,mime_type,extension",
+        [
+            ("video", "video/webm", ".webm"),
+            ("video", None, ".mp4"),
+            ("audio", "audio/flac", ".flac"),
+            ("document", "application/pdf", ".pdf"),
+            ("document", None, ".bin"),
+        ],
+    )
+    def test_unnamed_media_keeps_usable_extension(self, kind, mime_type, extension):
+        m = self._msg(**{kind: SimpleNamespace(file_name=None, mime_type=mime_type)})
+        assert media_filename(m, 123.4) == "123.4" + extension
+
     def test_no_media_fallback(self):
         assert media_filename(self._msg(), 7) == "7"
+
+    @pytest.mark.parametrize(
+        "animated,video,extension",
+        [(False, False, ".webp"), (True, False, ".tgs"), (False, True, ".webm")],
+    )
+    def test_unnamed_sticker_keeps_its_format(self, animated, video, extension):
+        sticker = SimpleNamespace(is_animated=animated, is_video=video)
+        assert media_filename(self._msg(sticker=sticker), 7) == "7" + extension
+
+    def test_sticker_without_format_flags_defaults_to_webp(self):
+        assert media_filename(self._msg(sticker=SimpleNamespace(file_size=5)), 7) == "7.webp"
 
 
 class TestApplyNameRules:

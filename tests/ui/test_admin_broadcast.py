@@ -29,9 +29,7 @@ def test_broadcast_is_literal_includes_owners_and_retries_flood(monkeypatch):
         )
         monkeypatch.setattr(admin, "list_whitelisted_ids", AsyncMock(return_value=[1, 9]))
         monkeypatch.setattr("tgforward.telegram.wait.heartbeat_sleep", AsyncMock())
-        monkeypatch.setattr(
-            "tgforward.ui.i18n.user_language", AsyncMock(return_value="en")
-        )
+        monkeypatch.setattr("tgforward.ui.i18n.user_language", AsyncMock(return_value="en"))
         await admin.broadcast_handler(NS(send_message=send_message), message)
         return status
 
@@ -52,9 +50,7 @@ def test_broadcast_rejects_text_over_telegram_limit(monkeypatch):
 
     async def run():
         monkeypatch.setattr(admin, "list_whitelisted_ids", AsyncMock())
-        monkeypatch.setattr(
-            "tgforward.ui.i18n.user_language", AsyncMock(return_value="en")
-        )
+        monkeypatch.setattr("tgforward.ui.i18n.user_language", AsyncMock(return_value="en"))
         await admin.broadcast_handler(NS(send_message=send), message)
 
     asyncio.run(run())

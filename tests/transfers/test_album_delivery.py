@@ -213,6 +213,60 @@ def test_single_member_never_calls_send_media_group(tmp_path):
     assert uploader.calls[0][0] == "send_document"
 
 
+def test_downloaded_album_videos_get_distinct_thumbnails_and_cleanup(monkeypatch, tmp_path):
+    from PIL import Image
+
+    videos = []
+    for index in range(2):
+        path = tmp_path / f"video-{index}.mp4"
+        path.write_bytes(b"video")
+        videos.append(path)
+    group = [
+        _media_message(id=index + 1, media_group_id="g", video=NS(file_size=5))
+        for index in range(2)
+    ]
+    downloader = NS(download_media=AsyncMock(side_effect=[str(path) for path in videos]))
+    monkeypatch.setattr(transfer, "custom_thumb_path", lambda _: None)
+    monkeypatch.setattr(
+        transfer,
+        "get_video_metadata",
+        AsyncMock(return_value={"duration": 12, "width": 640, "height": 360}),
+    )
+
+    async def screenshot(path, duration):
+        assert duration == 12
+        thumb = tmp_path / f"{path.rsplit('/', 1)[-1]}.jpg"
+        Image.new("RGB", (320, 180)).save(thumb)
+        return str(thumb)
+
+    async def send_media_group(chat_id, media, **kwargs):
+        assert [item.duration for item in media] == [12, 12]
+        assert len({item.thumb for item in media}) == 2
+        for item in media:
+            with Image.open(item.thumb) as image:
+                assert image.size == (320, 180)
+        return [status(), status()]
+
+    monkeypatch.setattr(transfer, "screenshot", screenshot)
+    uploader = NS(send_media_group=AsyncMock(side_effect=send_media_group))
+    asyncio.run(
+        transfer._send_album_physical(
+            uploader,
+            downloader,
+            group,
+            [None, None],
+            [None, None],
+            UserSettings(1),
+            "1",
+            1,
+            None,
+            None,
+            status(),
+        )
+    )
+    assert not list(tmp_path.iterdir())
+
+
 def test_long_floodwait_refreshes_heartbeat(monkeypatch):
     now, sleeps = [0.0], []
     real_sleep = asyncio.sleep

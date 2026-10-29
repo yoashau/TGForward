@@ -203,9 +203,7 @@ async def broadcast_handler(client, message):
         user_ids = list(dict.fromkeys([*OWNER_ID, *await list_whitelisted_ids()]))
         total = len(user_ids)
         if stop.is_set():
-            await message.reply(
-                tr("⏹ 广播已停止：成功 {0}，失败 {1}，未发送 {2}。", 0, 0, total)
-            )
+            await message.reply(tr("⏹ 广播已停止：成功 {0}，失败 {1}，未发送 {2}。", 0, 0, total))
             return
         status = await message.reply(tr("📣 开始向 {0} 个用户广播……", total))
         ok = fail = 0

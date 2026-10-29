@@ -29,7 +29,8 @@ def uptime_text() -> str:
     """进程运行时长（供 /status 使用）。"""
     from tgforward.ui.i18n import tr
 
-    seconds = int(time.monotonic() - _STARTED_AT)
+    # 避免大单调时钟值相减后把整秒算成 3660.999999 等近似值。
+    seconds = int(round(time.monotonic() - _STARTED_AT, 6))
     hours, remainder = divmod(seconds, 3600)
     minutes, secs = divmod(remainder, 60)
     return tr("{0}小时{1}分{2}秒", hours, minutes, secs)

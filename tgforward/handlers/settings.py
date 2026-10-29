@@ -23,7 +23,12 @@ from tgforward.telegram.clients import bot
 from tgforward.ui import dialogue, state
 from tgforward.ui.i18n import tr
 from tgforward.ui.interaction import interaction
-from tgforward.utils.media import normalize_thumbnail, remove_custom_thumb, thumbnail_path
+from tgforward.utils.media import (
+    custom_thumb_path,
+    normalize_thumbnail,
+    remove_custom_thumb,
+    thumbnail_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +42,8 @@ def settings_keyboard(category="home"):
         "home": [
             [(tr("💬 评论区内容"), "set:page:transfer")],
             [(tr("✏️ 文件与文案"), "set:page:content")],
-            [(tr("📤 发送目标"), "set:chat"), (tr("♻️ 恢复默认设置"), "set:confirmreset")],
+            [(tr("📤 发送目标"), "set:chat"), (tr("🧹 清除发送目标"), "set:clearchat")],
+            [(tr("♻️ 恢复默认设置"), "set:confirmreset")],
         ],
         "transfer": [
             [(tr("同时提取评论：开 / 关"), "set:comments")],
@@ -46,6 +52,14 @@ def settings_keyboard(category="home"):
             [(tr("文件名标签"), "set:rename"), (tr("自定义封面"), "set:thumb")],
             [(tr("追加文案"), "set:caption")],
             [(tr("替换规则"), "set:replacement"), (tr("删词规则"), "set:deleteword")],
+            [
+                (tr("🧹 清除文件名标签"), "set:clearrename"),
+                (tr("🧹 清除追加文案"), "set:clearcaption"),
+            ],
+            [
+                (tr("🧹 清除替换规则"), "set:clearreplacement"),
+                (tr("🧹 清除删词规则"), "set:cleardeleteword"),
+            ],
             [(tr("移除封面"), "set:remthumb")],
         ],
     }
@@ -60,7 +74,7 @@ PROMPTS = {
     "rename": ("📝 **文件名标签**\n\n请发送你想在文件名末尾附加的标签（如频道名或个人标识）。\n"),
     "chat": (
         "📤 **设置发送目标**\n\n"
-        "请发送目标群组或频道的 ID（以 `-100` 开头）。\n"
+        "请发送已向发送机器人发送 /start 的用户 ID，或目标群组、频道的 ID（以 `-100` 开头）。\n"
         "如需发送到群组的某个话题，格式为 `-100群组ID/话题ID`，例如：`-1004783898/12`\n"
     ),
     "caption": ("💬 **设置追加文案**\n\n请发送你想在纯文字消息末尾或媒体说明中追加的文字内容。\n"),
@@ -73,7 +87,7 @@ PROMPTS = {
     "thumb": ("🖼️ **设置自定义封面**\n\n请直接发送一张图片作为视频或文件的封面。\n"),
 }
 
-_TARGET_RE = re.compile(r"-100[1-9][0-9]*(?:/[1-9][0-9]*)?")
+_TARGET_RE = re.compile(r"(?:[1-9][0-9]*|-100[1-9][0-9]*)(?:/[1-9][0-9]*)?")
 
 
 @bot.on_message(filters.command("setting") & filters.private)
@@ -85,6 +99,10 @@ async def settings_command(client, message):
 
     await dialogue.clear(message.from_user.id)
     doc = await get_user(message.from_user.id) or {}
+    await message.reply(_settings_text(doc, message.from_user.id), reply_markup=settings_keyboard())
+
+
+def _settings_text(doc, uid):
     summary = []
     if doc.get("chat_id"):
         summary.append(tr("发送目标 `{0}`", doc["chat_id"]))
@@ -96,13 +114,14 @@ async def settings_command(client, message):
         summary.append(tr("删词 {0} 个", len(doc["delete_words"])))
     if doc.get("replacement_words"):
         summary.append(tr("替换 {0} 条", len(doc["replacement_words"])))
+    if custom_thumb_path(uid):
+        summary.append(tr("自定义封面已设置"))
     summary.append(tr("公开来源直接复制；私有来源下载后发送"))
     summary.append(
         tr("同时提取评论：") + (tr("已开启") if doc.get("auto_comments") else tr("已关闭"))
     )
 
-    text = tr(MENU_TEXT) + tr("\n\n📋 **当前设置**\n") + "\n".join(summary)
-    await message.reply(text, reply_markup=settings_keyboard())
+    return tr(MENU_TEXT) + tr("\n\n📋 **当前设置**\n") + "\n".join(summary)
 
 
 def _callback_filter(_, __, query):
@@ -126,22 +145,43 @@ async def settings_callback(client, query):
 
     from tgforward.handlers.menu import keyboard
 
+    if action.startswith("page:"):
+        if settings_keyboard(action.split(":", 1)[1]) is None:
+            await query.answer(tr("这个页面已更新，请重新打开菜单。"))
+            return
+    elif not (
+        action
+        in {
+            "confirmreset",
+            "reset",
+            "mode",
+            "comments",
+            "remthumb",
+            "clearchat",
+            "clearrename",
+            "clearcaption",
+            "clearreplacement",
+            "cleardeleteword",
+            *PROMPTS,
+        }
+        or action.startswith("mode:")
+    ):
+        await query.answer(tr("这个选项已失效，请重新打开菜单。"))
+        return
+
     panel = query.message._panel
     await dialogue.clear(uid, keep=panel.message if panel else None)
     if panel:
         panel.parent = {
             "mode": "set:page:transfer",
             "chat": "set:page:home",
+            "clearchat": "set:page:home",
             "confirmreset": "set:page:home",
             "reset": "set:page:home",
         }.get(action, "set:page:content")
 
     if action.startswith("page:"):
         category = action.split(":", 1)[1]
-        if settings_keyboard(category) is None:
-            await query.answer(tr("这个页面已更新，请重新打开菜单。"))
-            return
-        await dialogue.clear(uid, keep=panel.message if panel else None)
         await query.answer()
         await show_settings_page(query.message, uid, category)
         return
@@ -201,6 +241,22 @@ async def settings_callback(client, query):
         )
         await show_settings_page(query.message, uid, "content")
         return
+    clear_actions = {
+        "clearchat": ("chat_id", "home", tr("✅ 已清除发送目标。")),
+        "clearrename": ("rename_tag", "content", tr("✅ 已清除文件名标签。")),
+        "clearcaption": ("caption", "content", tr("✅ 已清除追加文案。")),
+        "clearreplacement": ("replacement_words", "content", tr("✅ 已清除替换规则。")),
+        "cleardeleteword": ("delete_words", "content", tr("✅ 已清除删词规则。")),
+    }
+    if action in clear_actions:
+        field, category, notice = clear_actions[action]
+        value = {} if field == "replacement_words" else [] if field == "delete_words" else ""
+        if not await set_field(uid, field, value):
+            await query.answer(tr("保存失败，请重试。"), show_alert=True)
+            return
+        await query.answer(tr("已保存"))
+        await show_settings_page(query.message, uid, category, notice)
+        return
     prompt = tr(PROMPTS.get(action))
     if prompt is None:
         await query.answer(tr("这个选项已失效，请重新打开菜单。"))
@@ -211,15 +267,16 @@ async def settings_callback(client, query):
 
 async def show_settings_page(message, uid, category, notice=""):
     current = await get_user(uid) or {}
-    text = {
-        "home": tr(MENU_TEXT),
-        "transfer": (
+    if category == "home":
+        text = _settings_text(current, uid)
+    elif category == "transfer":
+        text = (
             tr("💬 **评论区内容**\n\n同时提取评论：")
             + (tr("开启") if current.get("auto_comments") else tr("关闭"))
             + tr("settings.comments_help")
-        ),
-        "content": tr("settings.files_captions_add_filename_tags"),
-    }[category]
+        )
+    else:
+        text = tr("settings.files_captions_add_filename_tags")
     await message.edit(
         (notice + "\n\n" if notice else "") + text, reply_markup=settings_keyboard(category)
     )
@@ -272,7 +329,9 @@ async def _handle_setchat(message, uid) -> bool:
     valid = match is not None and len(raw) <= 32
     if valid:
         chat, _, topic = raw.partition("/")
-        valid = -(2**63) < int(chat) < 0 and (not topic or int(topic) < 2**31)
+        valid = (0 < int(chat) < 2**63 or -(2**63) < int(chat) < 0) and (
+            not topic or chat.startswith("-100") and int(topic) < 2**31
+        )
     if not valid:
         await dialogue.prompt(
             message,

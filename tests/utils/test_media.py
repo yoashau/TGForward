@@ -194,6 +194,25 @@ def test_screenshot_cancel_removes_temporary(monkeypatch, thumb_dir):
     assert not list(thumb_dir.glob("*.jpg"))
 
 
+def test_screenshot_retries_first_frame_when_midpoint_has_no_frame(monkeypatch, thumb_dir):
+    attempts = []
+
+    async def run(*cmd):
+        second = cmd[cmd.index("-ss") + 1]
+        attempts.append(second)
+        if second == "0":
+            Image.new("RGB", (640, 360)).save(cmd[-1])
+            return b""
+        return None
+
+    monkeypatch.setattr(media, "_run_process", run)
+    output = asyncio.run(media.screenshot("video", 100, str(thumb_dir)))
+    assert attempts == ["50", "0"]
+    with Image.open(output) as image:
+        assert image.size == (320, 180)
+    Path(output).unlink()
+
+
 def test_screenshot_invalid_output_removed(monkeypatch, thumb_dir):
     monkeypatch.setattr(media, "_run_process", AsyncMock(return_value=b""))
     assert asyncio.run(media.screenshot("video", 1, str(thumb_dir))) is None

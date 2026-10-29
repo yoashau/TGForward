@@ -179,6 +179,32 @@ async def navigate(client, query):
         except Exception:
             logger.exception("Command menu language update failed user=%s", uid)
         action = "home" if action.startswith("home:") else "language"
+    admin_action = action.startswith("list:") or action in ("do:allow", "do:ban", "do:status")
+    if admin_action and uid not in OWNER_ID:
+        await query.answer(tr("仅管理员可查看白名单。"), show_alert=True)
+        return
+    actions = {
+        "close",
+        "settings",
+        "confirm:logout",
+        "confirm:unbindbot",
+        "do:login",
+        "do:logout",
+        "do:bindbot",
+        "do:unbindbot",
+        "do:allow",
+        "do:ban",
+        "do:status",
+        "do:me",
+        "do:history",
+    }
+    if (
+        action not in actions
+        and not (action.startswith("list:") and action[5:].isdigit())
+        and page(action, uid, language=language) is None
+    ):
+        await query.answer(tr("菜单不可用"))
+        return
     await dialogue.clear(uid, keep=panel.message if panel else None)
     if panel:
         panel.parent = {
@@ -201,9 +227,6 @@ async def navigate(client, query):
     if action.startswith("list:"):
         from tgforward.handlers.admin import whitelist_page
 
-        if uid not in OWNER_ID:
-            await query.answer(tr("仅管理员可查看白名单。"), show_alert=True)
-            return
         if panel:
             panel.parent = "admin"
         await dialogue.clear(uid, keep=panel.message if panel else None)

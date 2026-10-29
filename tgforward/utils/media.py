@@ -149,26 +149,32 @@ async def screenshot(
     try:
         fd, output_file = tempfile.mkstemp(suffix=".jpg", dir=out_dir)
         os.close(fd)
-        stdout = await _run_process(
-            "ffmpeg",
-            "-ss",
-            str(max(0, (duration or 0) // 2)),
-            "-i",
-            str(video_path),
-            "-frames:v",
-            "1",
-            "-vf",
-            "scale=320:320:force_original_aspect_ratio=decrease",
-            "-q:v",
-            "3",
-            "-y",
-            output_file,
-        )
-        if stdout is None:
-            return None
-        normalize_thumbnail(output_file, output_file)
-        keep = True
-        return output_file
+        midpoint = max(0, (duration or 0) // 2)
+        for second in (midpoint, 0) if midpoint else (0,):
+            stdout = await _run_process(
+                "ffmpeg",
+                "-ss",
+                str(second),
+                "-i",
+                str(video_path),
+                "-frames:v",
+                "1",
+                "-vf",
+                "scale=320:320:force_original_aspect_ratio=decrease",
+                "-q:v",
+                "3",
+                "-y",
+                output_file,
+            )
+            if stdout is None:
+                continue
+            try:
+                normalize_thumbnail(output_file, output_file)
+            except (OSError, ValueError):
+                continue
+            keep = True
+            return output_file
+        return None
     except (OSError, ValueError) as exc:
         logger.warning("截图失败：%s", exc)
         return None

@@ -184,7 +184,6 @@ async def _delete_quietly(message) -> None:
         await message.delete()
 
 
-
 async def reserve_send_slot(task=None, interval=None):
     """预订下一次发送时刻。广播与搬运共享同一节奏，避免同时打满 Bot 限额。"""
     global _last_send_at
@@ -1006,8 +1005,10 @@ async def _send_album_physical(
         status = TaskStatus.wrap(status, task)
 
     files: list[str] = []
+    temporary_thumbs: list[str] = []
     try:
         media_inputs = []
+        custom_thumb = custom_thumb_path(settings.user_id)
         for idx, gm in enumerate(group):
             if task is not None:
                 task.check_cancel()
@@ -1041,7 +1042,6 @@ async def _send_album_physical(
                     rename_tag=settings.rename_tag,
                 )
                 files[-1] = path
-            thumb = custom_thumb_path(settings.user_id)
             # None 表示该成员无规则改动 → 保留原始 caption
             item_cap = finals[idx] if finals[idx] is not None else originals[idx]
             item_cap = _media_caption(item_cap) or None
@@ -1049,16 +1049,24 @@ async def _send_album_physical(
             if gm.photo:
                 media_inputs.append(InputMediaPhoto(path, caption=item_cap, **cap_kwargs))
             elif gm.video:
+                metadata = await get_video_metadata(path)
+                thumb = custom_thumb
+                if thumb is None:
+                    thumb = await screenshot(path, (metadata or {}).get("duration"))
+                    if thumb:
+                        temporary_thumbs.append(thumb)
                 media_inputs.append(
-                    InputMediaVideo(path, caption=item_cap, thumb=thumb, **cap_kwargs)
+                    InputMediaVideo(
+                        path, caption=item_cap, thumb=thumb, **(metadata or {}), **cap_kwargs
+                    )
                 )
             elif gm.audio:
                 media_inputs.append(
-                    InputMediaAudio(path, caption=item_cap, thumb=thumb, **cap_kwargs)
+                    InputMediaAudio(path, caption=item_cap, thumb=custom_thumb, **cap_kwargs)
                 )
             else:
                 media_inputs.append(
-                    InputMediaDocument(path, caption=item_cap, thumb=thumb, **cap_kwargs)
+                    InputMediaDocument(path, caption=item_cap, thumb=custom_thumb, **cap_kwargs)
                 )
 
         if not media_inputs:
@@ -1099,6 +1107,8 @@ async def _send_album_physical(
     finally:
         for f in files:
             _silent_remove(f)
+        for thumb in temporary_thumbs:
+            _silent_remove(thumb)
         if owned:
             await _delete_quietly(status)
 

@@ -278,7 +278,8 @@ def test_comment_answer_failure_releases_registration(monkeypatch):
     [
         ("-100123", True),
         ("-100123/12", True),
-        ("123", False),
+        ("123", True),
+        ("123/12", False),
         ("-123", False),
         ("-100", False),
         ("-1000", False),
@@ -469,6 +470,29 @@ def test_group_cache_expires_without_new_requests(monkeypatch):
         await asyncio.sleep(0.05)
         assert not router._recent_groups
         await router.shutdown()
+
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize("clear_all", [False, True])
+def test_removed_queued_album_can_be_forwarded_again(clear_all):
+    async def check():
+        active = tasks.register(1, "comments", 1)
+        forwarded = message()
+        forwarded.media_group_id = "album"
+        forwarded.forward_from_chat = NS(id=-100123, username=None)
+        forwarded.forward_from_message_id = 5
+        await router.smart_router(None, forwarded)
+        request = next(iter(tasks._queues[1].values()))
+        assert router._group_recently_handled(1, "album")
+        if clear_all:
+            assert tasks.clear_queue(1) == 1
+        else:
+            assert tasks.remove_queued(1, request.token)
+        assert not router._group_recently_handled(1, "album")
+        tasks.finish(1, active)
+        await router.shutdown()
+        await ui.shutdown()
 
     asyncio.run(check())
 
